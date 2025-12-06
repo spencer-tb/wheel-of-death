@@ -51,3 +51,8 @@ npx wrangler pages deploy .svelte-kit/cloudflare --project-name=wheelofdeath  # 
 - Tailwind v4 uses `@import "tailwindcss"` not `@tailwind` directives
 - Cloudflare adapter requires `platform.env.WHEELS` for KV access
 - New Wheel link uses `data-sveltekit-reload` for full page refresh
+
+## Git Commits
+
+- Do NOT add Claude as a co-author on commits
+- Keep commit messages concise and descriptive

@@ -13,9 +13,10 @@
 		fastMode?: boolean;
 		soundEnabled?: boolean;
 		colorScheme?: 'default' | 'rainbow' | 'pastel' | 'ocean' | 'sunset';
+		idleSpinEnabled?: boolean;
 	}
 
-	let { participants, onSpinComplete, onSpinStart, size = 400, onHover, darkMode = true, fastMode = false, soundEnabled = true, colorScheme = 'default' }: Props = $props();
+	let { participants, onSpinComplete, onSpinStart, size = 400, onHover, darkMode = true, fastMode = false, soundEnabled = true, colorScheme = 'default', idleSpinEnabled = true }: Props = $props();
 
 	let canvas: HTMLCanvasElement;
 	let isSpinning = $state(false);
@@ -538,13 +539,13 @@
 	let lastTickIndex = -1;
 
 	function startIdleAnimation() {
-		if (idleAnimationId) return;
+		if (!idleSpinEnabled || idleAnimationId) return;
 
 		let lastTime = performance.now();
 		const idleSpeed = 0.0003;
 
 		function animate(currentTime: number) {
-			if (isSpinning) {
+			if (isSpinning || !idleSpinEnabled) {
 				idleAnimationId = null;
 				return;
 			}
@@ -936,6 +937,17 @@
 
 	$effect(() => {
 		participants;
+	});
+
+	$effect(() => {
+		// Stop idle animation when disabled
+		if (!idleSpinEnabled && idleAnimationId) {
+			stopIdleAnimation();
+		}
+		// Start idle animation when enabled and not spinning
+		else if (idleSpinEnabled && !idleAnimationId && !isSpinning) {
+			startIdleAnimation();
+		}
 	});
 </script>
 

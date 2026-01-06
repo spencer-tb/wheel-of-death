@@ -64,6 +64,7 @@
 	let darkMode = $state(data.config?.darkMode ?? false);
 	let fastMode = $state(data.config?.fastMode ?? false);
 	let soundEnabled = $state(data.config?.soundEnabled ?? true);
+	let idleSpinEnabled = $state(data.config?.idleSpinEnabled ?? true);
 	let colorScheme = $state<'default' | 'rainbow' | 'pastel' | 'ocean' | 'sunset'>(data.config?.colorScheme || 'default');
 	let currentTagline = $state(getTagline(data.config?.darkMode ?? false));
 	let showToast = $state(false);
@@ -141,6 +142,7 @@
 					darkMode,
 					fastMode,
 					soundEnabled,
+					idleSpinEnabled,
 					colorScheme,
 					createdAt: data.config?.createdAt
 				})
@@ -439,6 +441,22 @@
 			</button>
 		</div>
 
+		<!-- Idle Spin Toggle -->
+		<div class="flex items-center justify-between mb-3">
+			<span class="text-sm" class:text-gray-600={!darkMode} class:text-gray-400={darkMode}>Background Spin</span>
+			<button
+				onclick={() => { idleSpinEnabled = !idleSpinEnabled; }}
+				class="relative w-11 h-6 rounded-full transition-colors"
+				class:bg-indigo-600={idleSpinEnabled}
+				class:bg-gray-300={!idleSpinEnabled}
+			>
+				<span
+					class="absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform"
+					class:translate-x-5={idleSpinEnabled}
+				></span>
+			</button>
+		</div>
+
 		<!-- Timer Toggle -->
 		<div class="flex items-center justify-between mb-3">
 			<span class="text-sm" class:text-gray-600={!darkMode} class:text-gray-400={darkMode}>Timer</span>
@@ -615,6 +633,7 @@
 				{darkMode}
 				{fastMode}
 				{soundEnabled}
+				{idleSpinEnabled}
 				{colorScheme}
 			/>
 

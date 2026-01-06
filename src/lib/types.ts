@@ -13,6 +13,7 @@ export interface WheelConfig {
 	darkMode: boolean;
 	fastMode: boolean;
 	soundEnabled: boolean;
+	idleSpinEnabled: boolean;
 	colorScheme: 'default' | 'rainbow' | 'pastel' | 'ocean' | 'sunset';
 	createdAt: number;
 	lastAccessedAt: number;

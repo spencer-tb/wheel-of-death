@@ -5,7 +5,7 @@
 	import Timer from '$lib/components/Timer.svelte';
 	import ParticipantList from '$lib/components/ParticipantList.svelte';
 	import type { Participant } from '$lib/types';
-	import { generateId, getRandomPhrase, secureRandom } from '$lib/utils';
+	import { generateId, getRandomPhrase, getRandomQuestion, secureRandom } from '$lib/utils';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
@@ -69,6 +69,8 @@
 	let currentTagline = $state(getTagline(data.config?.darkMode ?? false));
 	let showToast = $state(false);
 	let toastMessage = $state('');
+	let icebreakerEnabled = $state(false);
+	let currentQuestion = $state('');
 
 	const MOBILE_BREAKPOINT = 900;
 
@@ -226,6 +228,9 @@
 	function handleSpinComplete(participant: Participant) {
 		selectedParticipant = participant;
 		winnerPhrase = getRandomPhrase(darkMode);
+		if (icebreakerEnabled) {
+			currentQuestion = getRandomQuestion(darkMode);
+		}
 
 		// Same behavior for both modes, just different spin speed
 		showResult = true;
@@ -344,6 +349,7 @@
 		navigator.clipboard.writeText(url);
 		toast('Link copied!');
 	}
+
 </script>
 
 <svelte:head>
@@ -469,6 +475,22 @@
 				<span
 					class="absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform"
 					class:translate-x-5={timerEnabled}
+				></span>
+			</button>
+		</div>
+
+		<!-- Icebreaker Toggle -->
+		<div class="flex items-center justify-between mb-3">
+			<span class="text-sm" class:text-gray-600={!darkMode} class:text-gray-400={darkMode}>Fun Questions</span>
+			<button
+				onclick={() => { icebreakerEnabled = !icebreakerEnabled; }}
+				class="relative w-11 h-6 rounded-full transition-colors"
+				class:bg-amber-500={icebreakerEnabled}
+				class:bg-gray-300={!icebreakerEnabled}
+			>
+				<span
+					class="absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform"
+					class:translate-x-5={icebreakerEnabled}
 				></span>
 			</button>
 		</div>
@@ -682,11 +704,33 @@
 					style={darkMode ? "font-family: 'Creepster', cursive;" : ""}
 				>{winnerPhrase}</p>
 				<p
-					class="text-5xl font-bold mb-6"
+					class="text-5xl font-bold"
+					class:mb-6={!icebreakerEnabled}
+					class:mb-4={icebreakerEnabled}
 					class:text-indigo-500={!darkMode}
 					class:text-red-500={darkMode}
 					style={darkMode ? "font-family: 'Creepster', cursive;" : ""}
 				>{selectedParticipant.name}</p>
+
+				{#if icebreakerEnabled && currentQuestion}
+					<div
+						class="mb-5 mx-2 px-4 py-3 rounded-xl"
+						class:bg-amber-50={!darkMode}
+						class:border-amber-200={!darkMode}
+						class:border-purple-800={darkMode}
+						style="border: 1px solid; {darkMode ? 'background: rgb(59 7 100 / 0.5);' : ''}"
+					>
+						<p class="text-xs uppercase tracking-wider mb-1"
+							class:text-amber-500={!darkMode}
+							class:text-purple-400={darkMode}
+						>{darkMode ? '🔮 Answer this...' : '🎲 Answer this...'}</p>
+						<p class="text-base font-medium"
+							class:text-amber-900={!darkMode}
+							class:text-purple-200={darkMode}
+							style={darkMode ? "font-family: 'Creepster', cursive;" : ""}
+						>{currentQuestion}</p>
+					</div>
+				{/if}
 
 				{#if timerEnabled}
 					<div class="mb-6">
@@ -779,7 +823,7 @@
 				class="hover:opacity-70"
 			>🚫 Don't click me</a>
 			<span class="footer-bullet">•</span>
-			<span>🏷️ v0.2.0</span>
+			<span>🏷️ v0.3.0</span>
 		</div>
 	</div>
 </footer>

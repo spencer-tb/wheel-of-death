@@ -6,9 +6,10 @@
 		participants: Participant[];
 		onUpdate: (participants: Participant[]) => void;
 		darkMode?: boolean;
+		deathMode?: boolean;
 	}
 
-	let { participants, onUpdate, darkMode = false }: Props = $props();
+	let { participants, onUpdate, darkMode = false, deathMode = false }: Props = $props();
 
 	let newName = $state('');
 	let isExpanded = $state(true);
@@ -94,7 +95,7 @@
 		'#2E0219', '#0D0D0D'
 	];
 
-	const presetColors = $derived(darkMode ? DARK_COLORS : LIGHT_COLORS);
+	const presetColors = $derived(deathMode ? DARK_COLORS : LIGHT_COLORS);
 </script>
 
 <div class="w-full">

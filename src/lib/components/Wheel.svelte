@@ -653,8 +653,8 @@
 
 			// Draw slice with gradient
 			const gradient = ctx.createRadialGradient(0, 0, 0, 0, 0, radius);
-			const baseColor = participant.color || getSliceColor(i, darkMode, colorScheme);
-			if (darkMode) {
+			const baseColor = participant.color || getSliceColor(i, darkMode, colorScheme, deathMode);
+			if (deathMode) {
 				gradient.addColorStop(0, '#1a1a2e');
 				gradient.addColorStop(0.3, baseColor);
 				gradient.addColorStop(1, baseColor);
@@ -757,7 +757,7 @@
 			const angleAtPointer = (Math.PI / 2 - normalizedRotation + 2 * Math.PI) % (2 * Math.PI);
 			const colorIndex = Math.floor(angleAtPointer / sliceAngle) % active.length;
 			const currentParticipant = active[colorIndex];
-			pointerColor = currentParticipant?.color || getSliceColor(colorIndex, darkMode, colorScheme);
+			pointerColor = currentParticipant?.color || getSliceColor(colorIndex, darkMode, colorScheme, deathMode);
 		}
 
 		ctx.save();

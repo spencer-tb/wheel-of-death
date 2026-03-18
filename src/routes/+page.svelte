@@ -409,6 +409,7 @@
 	<ParticipantList
 		{participants}
 		darkMode={isDark}
+		{deathMode}
 		onUpdate={handleParticipantsUpdate}
 	/>
 

@@ -39,8 +39,8 @@
 		'Ready, set, spin!'
 	];
 
-	function getTagline(isDark: boolean): string {
-		const list = isDark ? DEATH_TAGLINES : FUN_TAGLINES;
+	function getTagline(deathMode: boolean): string {
+		const list = deathMode ? DEATH_TAGLINES : FUN_TAGLINES;
 		return list[Math.floor(secureRandom() * list.length)];
 	}
 
@@ -61,7 +61,8 @@
 	let timerEnabled = $state(data.config?.timerEnabled ?? true);
 	let isTimerRunning = $state(false);
 	let wheelSize = $state(750);
-	let darkMode = $state(data.config?.darkMode ?? false);
+	let deathMode = $state(data.config?.darkMode ?? false);
+	let darkTheme = $state(false);
 	let fastMode = $state(data.config?.fastMode ?? false);
 	let soundEnabled = $state(data.config?.soundEnabled ?? true);
 	let idleSpinEnabled = $state(data.config?.idleSpinEnabled ?? true);
@@ -71,6 +72,9 @@
 	let toastMessage = $state('');
 	let icebreakerEnabled = $state(false);
 	let currentQuestion = $state('');
+
+	// isDark is true when either dark theme or death mode is active
+	const isDark = $derived(darkTheme || deathMode);
 
 	const MOBILE_BREAKPOINT = 900;
 
@@ -102,6 +106,14 @@
 		}
 		updateSize();
 		window.addEventListener('resize', updateSize);
+
+		// Initialize dark theme from localStorage or system preference
+		const stored = localStorage.getItem('darkTheme');
+		if (stored !== null) {
+			darkTheme = stored === 'true';
+		} else {
+			darkTheme = window.matchMedia('(prefers-color-scheme: dark)').matches;
+		}
 
 		// Fetch global spin count
 		fetchGlobalSpinCount();
@@ -141,7 +153,7 @@
 					participants,
 					timerDuration,
 					timerEnabled,
-					darkMode,
+					darkMode: deathMode,
 					fastMode,
 					soundEnabled,
 					idleSpinEnabled,
@@ -179,7 +191,7 @@
 
 	function fireConfetti() {
 		// No confetti in death mode
-		if (darkMode) return;
+		if (deathMode) return;
 
 		const colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#F7DC6F', '#BB8FCE', '#96E6A1'];
 
@@ -227,9 +239,9 @@
 
 	function handleSpinComplete(participant: Participant) {
 		selectedParticipant = participant;
-		winnerPhrase = getRandomPhrase(darkMode);
+		winnerPhrase = getRandomPhrase(deathMode);
 		if (icebreakerEnabled) {
-			currentQuestion = getRandomQuestion(darkMode);
+			currentQuestion = getRandomQuestion(deathMode);
 		}
 
 		// Same behavior for both modes, just different spin speed
@@ -240,7 +252,7 @@
 		pendingRemoval = participant.id;
 
 		// Fire effects!
-		if (darkMode) {
+		if (deathMode) {
 			fireBloodSplats();
 		} else {
 			fireConfetti();
@@ -287,16 +299,21 @@
 		namesEdited = true;
 	}
 
+	function toggleDarkTheme() {
+		darkTheme = !darkTheme;
+		localStorage.setItem('darkTheme', String(darkTheme));
+	}
+
 	function toggleDeathMode() {
-		darkMode = !darkMode;
-		currentTagline = getTagline(darkMode);
+		deathMode = !deathMode;
+		currentTagline = getTagline(deathMode);
 
 		// Clear custom colors when switching modes
 		participants = participants.map(p => ({ ...p, color: undefined }));
 
 		// Only swap names if user hasn't edited them
 		if (!namesEdited) {
-			participants = createParticipants(darkMode ? DEATH_NAMES : NORMAL_NAMES);
+			participants = createParticipants(deathMode ? DEATH_NAMES : NORMAL_NAMES);
 		}
 	}
 
@@ -353,23 +370,23 @@
 </script>
 
 <svelte:head>
-	<title>{darkMode ? '🪦 Wheel of Death' : '🎉 Wheel of Fun'}</title>
+	<title>{deathMode ? '🪦 Wheel of Death' : '🎉 Wheel of Fun'}</title>
 </svelte:head>
 
 {#snippet settingsContent()}
 	<!-- Participants Section -->
 	<div class="flex items-center justify-between mb-4">
-		<h2 class="text-xl font-semibold" class:text-gray-800={!darkMode} class:text-white={darkMode}>Participants</h2>
+		<h2 class="text-xl font-semibold" class:text-gray-800={!isDark} class:text-white={isDark}>Participants</h2>
 		<div class="flex items-center gap-2">
 			<button
 				onclick={() => showPanel = false}
 				class="hidden min-[900px]:block text-xs px-2 py-1 rounded transition-colors"
-				class:text-gray-500={!darkMode}
-				class:hover:text-gray-700={!darkMode}
-				class:hover:bg-gray-100={!darkMode}
-				class:text-gray-400={darkMode}
-				class:hover:text-gray-300={darkMode}
-				class:hover:bg-slate-700={darkMode}
+				class:text-gray-500={!isDark}
+				class:hover:text-gray-700={!isDark}
+				class:hover:bg-gray-100={!isDark}
+				class:text-gray-400={isDark}
+				class:hover:text-gray-300={isDark}
+				class:hover:bg-slate-700={isDark}
 				title="Hide settings"
 			>
 				Hide
@@ -383,7 +400,7 @@
 					Clear All
 				</button>
 			{/if}
-			<span class="text-xs px-2 py-1 rounded-full" class:text-gray-500={!darkMode} class:bg-gray-100={!darkMode} class:text-gray-400={darkMode} class:bg-slate-700={darkMode}>
+			<span class="text-xs px-2 py-1 rounded-full" class:text-gray-500={!isDark} class:bg-gray-100={!isDark} class:text-gray-400={isDark} class:bg-slate-700={isDark}>
 				{activeCount}/{participants.length}
 			</span>
 		</div>
@@ -391,33 +408,33 @@
 
 	<ParticipantList
 		{participants}
-		{darkMode}
+		darkMode={isDark}
 		onUpdate={handleParticipantsUpdate}
 	/>
 
 	<!-- Settings Section -->
-	<div class="mt-5 pt-5 border-t" class:border-gray-200={!darkMode} class:border-slate-700={darkMode}>
-		<h3 class="text-lg font-semibold mb-4" class:text-gray-700={!darkMode} class:text-gray-300={darkMode}>Settings</h3>
+	<div class="mt-5 pt-5 border-t" class:border-gray-200={!isDark} class:border-slate-700={isDark}>
+		<h3 class="text-lg font-semibold mb-4" class:text-gray-700={!isDark} class:text-gray-300={isDark}>Settings</h3>
 
 		<!-- Death Mode Toggle -->
 		<div class="flex items-center justify-between mb-3">
-			<span class="text-sm" class:text-gray-600={!darkMode} class:text-gray-400={darkMode}>Death Mode</span>
+			<span class="text-sm" class:text-gray-600={!isDark} class:text-gray-400={isDark}>Death Mode</span>
 			<button
 				onclick={toggleDeathMode}
 				class="relative w-11 h-6 rounded-full transition-colors"
-				class:bg-red-600={darkMode}
-				class:bg-gray-300={!darkMode}
+				class:bg-red-600={deathMode}
+				class:bg-gray-300={!deathMode}
 			>
 				<span
 					class="absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform"
-					class:translate-x-5={darkMode}
+					class:translate-x-5={deathMode}
 				></span>
 			</button>
 		</div>
 
 		<!-- Fast Mode Toggle -->
 		<div class="flex items-center justify-between mb-3">
-			<span class="text-sm" class:text-gray-600={!darkMode} class:text-gray-400={darkMode}>Fast Spin</span>
+			<span class="text-sm" class:text-gray-600={!isDark} class:text-gray-400={isDark}>Fast Spin</span>
 			<button
 				onclick={() => { fastMode = !fastMode; }}
 				class="relative w-11 h-6 rounded-full transition-colors"
@@ -433,7 +450,7 @@
 
 		<!-- Sound Toggle -->
 		<div class="flex items-center justify-between mb-3">
-			<span class="text-sm" class:text-gray-600={!darkMode} class:text-gray-400={darkMode}>Sound</span>
+			<span class="text-sm" class:text-gray-600={!isDark} class:text-gray-400={isDark}>Sound</span>
 			<button
 				onclick={() => { soundEnabled = !soundEnabled; }}
 				class="relative w-11 h-6 rounded-full transition-colors"
@@ -449,7 +466,7 @@
 
 		<!-- Idle Spin Toggle -->
 		<div class="flex items-center justify-between mb-3">
-			<span class="text-sm" class:text-gray-600={!darkMode} class:text-gray-400={darkMode}>Background Spin</span>
+			<span class="text-sm" class:text-gray-600={!isDark} class:text-gray-400={isDark}>Background Spin</span>
 			<button
 				onclick={() => { idleSpinEnabled = !idleSpinEnabled; }}
 				class="relative w-11 h-6 rounded-full transition-colors"
@@ -465,7 +482,7 @@
 
 		<!-- Timer Toggle -->
 		<div class="flex items-center justify-between mb-3">
-			<span class="text-sm" class:text-gray-600={!darkMode} class:text-gray-400={darkMode}>Timer</span>
+			<span class="text-sm" class:text-gray-600={!isDark} class:text-gray-400={isDark}>Timer</span>
 			<button
 				onclick={() => { timerEnabled = !timerEnabled; }}
 				class="relative w-11 h-6 rounded-full transition-colors"
@@ -481,7 +498,7 @@
 
 		<!-- Icebreaker Toggle -->
 		<div class="flex items-center justify-between mb-3">
-			<span class="text-sm" class:text-gray-600={!darkMode} class:text-gray-400={darkMode}>Fun Questions</span>
+			<span class="text-sm" class:text-gray-600={!isDark} class:text-gray-400={isDark}>Fun Questions</span>
 			<button
 				onclick={() => { icebreakerEnabled = !icebreakerEnabled; }}
 				class="relative w-11 h-6 rounded-full transition-colors"
@@ -498,18 +515,18 @@
 		<!-- Timer Duration -->
 		{#if timerEnabled}
 			<div class="mb-3">
-				<label class="text-sm block mb-1" class:text-gray-600={!darkMode} class:text-gray-400={darkMode}>Duration (seconds)</label>
+				<label class="text-sm block mb-1" class:text-gray-600={!isDark} class:text-gray-400={isDark}>Duration (seconds)</label>
 				<input
 					type="number"
 					bind:value={timerDuration}
 					min="10"
 					max="600"
 					class="w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-					class:border-gray-300={!darkMode}
-					class:bg-white={!darkMode}
-					class:border-slate-600={darkMode}
-					class:bg-slate-700={darkMode}
-					class:text-white={darkMode}
+					class:border-gray-300={!isDark}
+					class:bg-white={!isDark}
+					class:border-slate-600={isDark}
+					class:bg-slate-700={isDark}
+					class:text-white={isDark}
 				/>
 			</div>
 		{/if}
@@ -517,17 +534,17 @@
 	</div>
 
 	<!-- Actions -->
-	<div class="mt-3 pt-3 border-t space-y-2" class:border-gray-100={!darkMode} class:border-slate-700={darkMode}>
+	<div class="mt-3 pt-3 border-t space-y-2" class:border-gray-100={!isDark} class:border-slate-700={isDark}>
 		{#if participants.some((p) => !p.active)}
 			<button
 				onclick={resetAll}
 				class="w-full px-3 py-2 text-sm rounded-lg transition-colors"
-				class:bg-gray-100={!darkMode}
-				class:text-gray-700={!darkMode}
-				class:hover:bg-gray-200={!darkMode}
-				class:bg-slate-700={darkMode}
-				class:text-gray-300={darkMode}
-				class:hover:bg-slate-600={darkMode}
+				class:bg-gray-100={!isDark}
+				class:text-gray-700={!isDark}
+				class:hover:bg-gray-200={!isDark}
+				class:bg-slate-700={isDark}
+				class:text-gray-300={isDark}
+				class:hover:bg-slate-600={isDark}
 			>
 				Reset All
 			</button>
@@ -537,12 +554,12 @@
 			<button
 				onclick={clearAll}
 				class="w-full px-3 py-2 text-sm rounded-lg transition-colors"
-				class:bg-red-100={!darkMode}
-				class:text-red-700={!darkMode}
-				class:hover:bg-red-200={!darkMode}
-				class:bg-red-950={darkMode}
-				class:text-red-400={darkMode}
-				class:hover:bg-red-900={darkMode}
+				class:bg-red-100={!isDark}
+				class:text-red-700={!isDark}
+				class:hover:bg-red-200={!isDark}
+				class:bg-red-950={isDark}
+				class:text-red-400={isDark}
+				class:hover:bg-red-900={isDark}
 			>
 				Clear All
 			</button>
@@ -575,12 +592,12 @@
 			href="/"
 			data-sveltekit-reload
 			class="w-full px-3 py-2 text-sm rounded-lg transition-colors flex items-center justify-center gap-2"
-			class:bg-indigo-100={!darkMode}
-			class:text-indigo-700={!darkMode}
-			class:hover:bg-indigo-200={!darkMode}
-			class:bg-indigo-950={darkMode}
-			class:text-indigo-400={darkMode}
-			class:hover:bg-indigo-900={darkMode}
+			class:bg-indigo-100={!isDark}
+			class:text-indigo-700={!isDark}
+			class:hover:bg-indigo-200={!isDark}
+			class:bg-indigo-950={isDark}
+			class:text-indigo-400={isDark}
+			class:hover:bg-indigo-900={isDark}
 		>
 			<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
@@ -591,27 +608,27 @@
 {/snippet}
 
 <main
-	class="min-h-screen pt-16 pb-8 px-4 relative transition-colors duration-300 max-[900px]:min-h-0 max-[900px]:flex-1 max-[900px]:pt-8 max-[900px]:pb-8 {darkMode ? 'bg-slate-900' : 'bg-gradient-to-br from-slate-100 to-slate-200'}"
+	class="min-h-screen pt-16 pb-8 px-4 relative transition-colors duration-300 max-[900px]:min-h-0 max-[900px]:flex-1 max-[900px]:pt-8 max-[900px]:pb-8 {isDark ? 'bg-slate-900' : 'bg-gradient-to-br from-slate-100 to-slate-200'}"
 >
 	<!-- Toggle Buttons - Fixed position -->
 	<div class="fixed top-4 right-4 z-50 flex gap-2 max-[900px]:hidden">
-		<!-- Dark Mode Toggle -->
+		<!-- Dark Theme Toggle -->
 		<button
-			onclick={toggleDeathMode}
+			onclick={toggleDarkTheme}
 			class="p-2 rounded-lg shadow-md transition-colors"
-			class:bg-white={!darkMode}
-			class:hover:bg-gray-50={!darkMode}
-			class:bg-slate-700={darkMode}
-			class:hover:bg-slate-600={darkMode}
-			title={darkMode ? 'Switch to Fun Mode' : 'Switch to Death Mode'}
+			class:bg-white={!isDark}
+			class:hover:bg-gray-50={!isDark}
+			class:bg-slate-700={isDark}
+			class:hover:bg-slate-600={isDark}
+			title={darkTheme ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
 		>
-			{#if darkMode}
-				<!-- Sun icon in death mode (click to switch to fun/light) -->
+			{#if isDark}
+				<!-- Sun icon (click to switch to light) -->
 				<svg class="w-5 h-5" style="color: #fbbf24;" fill="currentColor" viewBox="0 0 24 24">
 					<path d="M12 2.25a.75.75 0 01.75.75v2.25a.75.75 0 01-1.5 0V3a.75.75 0 01.75-.75zM7.5 12a4.5 4.5 0 119 0 4.5 4.5 0 01-9 0zM18.894 6.166a.75.75 0 00-1.06-1.06l-1.591 1.59a.75.75 0 101.06 1.061l1.591-1.59zM21.75 12a.75.75 0 01-.75.75h-2.25a.75.75 0 010-1.5H21a.75.75 0 01.75.75zM17.834 18.894a.75.75 0 001.06-1.06l-1.59-1.591a.75.75 0 10-1.061 1.06l1.59 1.591zM12 18a.75.75 0 01.75.75V21a.75.75 0 01-1.5 0v-2.25A.75.75 0 0112 18zM7.758 17.303a.75.75 0 00-1.061-1.06l-1.591 1.59a.75.75 0 001.06 1.061l1.591-1.59zM6 12a.75.75 0 01-.75.75H3a.75.75 0 010-1.5h2.25A.75.75 0 016 12zM6.697 7.757a.75.75 0 001.06-1.06l-1.59-1.591a.75.75 0 00-1.061 1.06l1.59 1.591z"/>
 				</svg>
 			{:else}
-				<!-- Moon icon in fun mode (click to switch to death/dark) -->
+				<!-- Moon icon (click to switch to dark) -->
 				<svg class="w-5 h-5" style="color: #6366f1;" fill="currentColor" viewBox="0 0 24 24">
 					<path d="M21.752 15.002A9.718 9.718 0 0118 15.75c-5.385 0-9.75-4.365-9.75-9.75 0-1.33.266-2.597.748-3.752A9.753 9.753 0 003 11.25C3 16.635 7.365 21 12.75 21a9.753 9.753 0 009.002-5.998z"/>
 				</svg>
@@ -621,13 +638,13 @@
 		<button
 			onclick={() => (showPanel = !showPanel)}
 			class="p-2 rounded-lg shadow-md transition-colors"
-			class:bg-white={!darkMode}
-			class:hover:bg-gray-50={!darkMode}
-			class:bg-slate-700={darkMode}
-			class:hover:bg-slate-600={darkMode}
+			class:bg-white={!isDark}
+			class:hover:bg-gray-50={!isDark}
+			class:bg-slate-700={isDark}
+			class:hover:bg-slate-600={isDark}
 			title={showPanel ? 'Hide settings' : 'Show settings'}
 		>
-			<svg class="w-5 h-5 transition-colors" class:text-gray-600={!darkMode} class:text-gray-300={darkMode} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+			<svg class="w-5 h-5 transition-colors" class:text-gray-600={!isDark} class:text-gray-300={isDark} fill="none" stroke="currentColor" viewBox="0 0 24 24">
 				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
 				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
 			</svg>
@@ -637,12 +654,12 @@
 	<!-- Center content -->
 	<div class="flex flex-col items-center justify-center">
 		<header class="text-center mb-8 min-[900px]:mb-12">
-			{#if darkMode}
+			{#if deathMode}
 				<h1 class="text-7xl max-[900px]:text-5xl max-[800px]:text-4xl max-[500px]:text-3xl mb-4 text-white" style="font-family: 'Creepster', cursive;">Wheel of Death</h1>
 				<h2 class="text-3xl max-[900px]:text-2xl max-[800px]:text-xl max-[500px]:text-lg font-semibold text-gray-400" style="font-family: 'Creepster', cursive;">{currentTagline}</h2>
 			{:else}
-				<h1 class="text-7xl max-[900px]:text-5xl max-[800px]:text-4xl max-[500px]:text-3xl mb-4 text-indigo-600" style="font-family: 'Fredoka', sans-serif;">Wheel of Fun</h1>
-				<h2 class="text-3xl max-[900px]:text-2xl max-[800px]:text-xl max-[500px]:text-lg text-gray-500" style="font-family: 'Fredoka', sans-serif;">{currentTagline}</h2>
+				<h1 class="text-7xl max-[900px]:text-5xl max-[800px]:text-4xl max-[500px]:text-3xl mb-4" class:text-indigo-600={!isDark} class:text-indigo-400={isDark} style="font-family: 'Fredoka', sans-serif;">Wheel of Fun</h1>
+				<h2 class="text-3xl max-[900px]:text-2xl max-[800px]:text-xl max-[500px]:text-lg" class:text-gray-500={!isDark} class:text-gray-400={isDark} style="font-family: 'Fredoka', sans-serif;">{currentTagline}</h2>
 			{/if}
 		</header>
 
@@ -652,7 +669,8 @@
 				size={wheelSize}
 				onSpinComplete={handleSpinComplete}
 				onSpinStart={handleSpinStart}
-				{darkMode}
+				darkMode={isDark}
+				{deathMode}
 				{fastMode}
 				{soundEnabled}
 				{idleSpinEnabled}
@@ -665,8 +683,8 @@
 	<!-- Side Panel - Fixed on desktop, inline on mobile -->
 	<div
 		class="hidden max-[900px]:block w-full mt-8 rounded-xl shadow-lg p-6 transition-colors"
-		class:bg-white={!darkMode}
-		class:bg-slate-800={darkMode}
+		class:bg-white={!isDark}
+		class:bg-slate-800={isDark}
 	>
 		{@render settingsContent()}
 	</div>
@@ -682,52 +700,53 @@
 			class="fixed rounded-xl shadow-lg p-8 z-40 overflow-y-auto transition-colors
 				   top-16 right-4 w-[440px] max-h-[calc(100vh-5rem)]
 				   max-[900px]:hidden"
-			class:bg-white={!darkMode}
-			class:bg-slate-800={darkMode}
+			class:bg-white={!isDark}
+			class:bg-slate-800={isDark}
 		>
 			{@render settingsContent()}
 		</div>
 	{/if}
 
-	<!-- Winner Popup Modal (only in normal mode) -->
+	<!-- Winner Popup Modal -->
 	{#if showResult && selectedParticipant}
 		<div class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
 			<div
 				class="rounded-2xl shadow-2xl max-w-sm w-full p-6 text-center"
-				class:bg-white={!darkMode}
-				class:bg-slate-800={darkMode}
+				class:bg-white={!isDark}
+				class:bg-slate-800={isDark}
 			>
 				<p
 					class="text-lg tracking-wide mb-2"
-					class:text-gray-500={!darkMode}
-					class:text-gray-400={darkMode}
-					style={darkMode ? "font-family: 'Creepster', cursive;" : ""}
+					class:text-gray-500={!isDark}
+					class:text-gray-400={isDark}
+					style={deathMode ? "font-family: 'Creepster', cursive;" : ""}
 				>{winnerPhrase}</p>
 				<p
 					class="text-5xl font-bold"
 					class:mb-6={!icebreakerEnabled}
 					class:mb-4={icebreakerEnabled}
-					class:text-indigo-500={!darkMode}
-					class:text-red-500={darkMode}
-					style={darkMode ? "font-family: 'Creepster', cursive;" : ""}
+					class:text-indigo-500={!deathMode}
+					class:text-red-500={deathMode}
+					style={deathMode ? "font-family: 'Creepster', cursive;" : ""}
 				>{selectedParticipant.name}</p>
 
 				{#if icebreakerEnabled && currentQuestion}
 					<div
 						class="mb-5 mx-2 px-4 py-3 rounded-xl"
-						class:bg-amber-50={!darkMode}
-						class:border-amber-200={!darkMode}
-						class:border-purple-800={darkMode}
-						style="border: 1px solid; {darkMode ? 'background: rgb(59 7 100 / 0.5);' : ''}"
+						class:bg-amber-50={!isDark}
+						class:border-amber-200={!isDark}
+						class:border-purple-800={deathMode}
+						style="border: 1px solid; {deathMode ? 'background: rgb(59 7 100 / 0.5);' : isDark ? 'background: rgb(30 41 59 / 0.8); border-color: rgb(71 85 105);' : ''}"
 					>
 						<p class="text-xs uppercase tracking-wider mb-1"
-							class:text-amber-500={!darkMode}
-							class:text-purple-400={darkMode}
-						>{darkMode ? '🔮 Answer this...' : '🎲 Answer this...'}</p>
+							class:text-amber-500={!deathMode}
+							class:text-purple-400={deathMode}
+						>{deathMode ? '🔮 Answer this...' : '🎲 Answer this...'}</p>
 						<p class="text-base font-medium"
-							class:text-amber-900={!darkMode}
-							class:text-purple-200={darkMode}
-							style={darkMode ? "font-family: 'Creepster', cursive;" : ""}
+							class:text-amber-900={!isDark}
+							class:text-purple-200={deathMode}
+							class:text-slate-200={isDark && !deathMode}
+							style={deathMode ? "font-family: 'Creepster', cursive;" : ""}
 						>{currentQuestion}</p>
 					</div>
 				{/if}
@@ -738,7 +757,7 @@
 							duration={timerDuration}
 							isRunning={isTimerRunning}
 							onComplete={handleTimerComplete}
-							{darkMode}
+							darkMode={isDark}
 						/>
 					</div>
 				{/if}
@@ -747,24 +766,24 @@
 					<button
 						onclick={removeFromWheel}
 						class="flex-1 px-4 py-3 rounded-lg transition-colors font-medium"
-						class:bg-red-100={!darkMode}
-						class:text-red-700={!darkMode}
-						class:hover:bg-red-200={!darkMode}
-						class:bg-red-950={darkMode}
-						class:text-red-400={darkMode}
-						class:hover:bg-red-900={darkMode}
+						class:bg-red-100={!isDark}
+						class:text-red-700={!isDark}
+						class:hover:bg-red-200={!isDark}
+						class:bg-red-950={isDark}
+						class:text-red-400={isDark}
+						class:hover:bg-red-900={isDark}
 					>
 						Remove
 					</button>
 					<button
 						onclick={closePopup}
 						class="flex-1 px-4 py-3 rounded-lg transition-colors font-medium"
-						class:bg-gray-100={!darkMode}
-						class:text-gray-700={!darkMode}
-						class:hover:bg-gray-200={!darkMode}
-						class:bg-slate-700={darkMode}
-						class:text-gray-300={darkMode}
-						class:hover:bg-slate-600={darkMode}
+						class:bg-gray-100={!isDark}
+						class:text-gray-700={!isDark}
+						class:hover:bg-gray-200={!isDark}
+						class:bg-slate-700={isDark}
+						class:text-gray-300={isDark}
+						class:hover:bg-slate-600={isDark}
 					>
 						Close
 					</button>
@@ -777,10 +796,10 @@
 	{#if showToast}
 		<div
 			class="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-lg shadow-lg text-sm font-medium transition-all animate-fade-in"
-			class:bg-gray-800={!darkMode}
-			class:text-white={!darkMode}
-			class:bg-white={darkMode}
-			class:text-gray-800={darkMode}
+			class:bg-gray-800={!isDark}
+			class:text-white={!isDark}
+			class:bg-white={isDark}
+			class:text-gray-800={isDark}
 		>
 			{toastMessage}
 		</div>
@@ -790,10 +809,10 @@
 
 <footer
 	class="py-4 px-4 min-[640px]:px-8 min-[900px]:px-16 text-sm transition-colors"
-	class:bg-slate-100={!darkMode}
-	class:text-gray-600={!darkMode}
-	class:bg-slate-800={darkMode}
-	class:text-gray-400={darkMode}
+	class:bg-slate-100={!isDark}
+	class:text-gray-600={!isDark}
+	class:bg-slate-800={isDark}
+	class:text-gray-400={isDark}
 >
 	<div class="flex flex-col min-[640px]:flex-row items-center justify-center min-[1100px]:justify-between gap-2 min-[640px]:gap-4 flex-wrap">
 		<span class="flex items-center gap-1">Made with ❤️ and ☕ by
@@ -807,7 +826,7 @@
 		</span>
 		<div class="flex items-center gap-2 min-[640px]:gap-4 flex-wrap justify-center text-xs min-[640px]:text-sm">
 			<span class="footer-bullet-centered">•</span>
-			<span>{darkMode ? '💀 Total Deaths' : '🎰 Total Spins'}: {globalSpinCount.toLocaleString()}</span>
+			<span>{deathMode ? '💀 Total Deaths' : '🎰 Total Spins'}: {globalSpinCount.toLocaleString()}</span>
 			<span class="footer-bullet">•</span>
 			<a
 				href="https://buymeacoffee.com/spencertb"

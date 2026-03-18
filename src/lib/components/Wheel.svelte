@@ -10,13 +10,14 @@
 		size?: number;
 		onHover?: (hovering: boolean) => void;
 		darkMode?: boolean;
+		deathMode?: boolean;
 		fastMode?: boolean;
 		soundEnabled?: boolean;
 		colorScheme?: 'default' | 'rainbow' | 'pastel' | 'ocean' | 'sunset';
 		idleSpinEnabled?: boolean;
 	}
 
-	let { participants, onSpinComplete, onSpinStart, size = 400, onHover, darkMode = true, fastMode = false, soundEnabled = true, colorScheme = 'default', idleSpinEnabled = true }: Props = $props();
+	let { participants, onSpinComplete, onSpinStart, size = 400, onHover, darkMode = true, deathMode = false, fastMode = false, soundEnabled = true, colorScheme = 'default', idleSpinEnabled = true }: Props = $props();
 
 	let canvas: HTMLCanvasElement;
 	let isSpinning = $state(false);
@@ -503,7 +504,7 @@
 		try {
 			initAudio();
 
-			if (darkMode) {
+			if (deathMode) {
 				// Pick random scary sound
 				const soundIndex = Math.floor(secureRandom() * SCARY_SOUNDS.length);
 				playScarySound(SCARY_SOUNDS[soundIndex]);
@@ -525,8 +526,8 @@
 			const gainNode = audioContext.createGain();
 			oscillator.connect(gainNode);
 			gainNode.connect(audioContext.destination);
-			oscillator.frequency.setValueAtTime(darkMode ? 200 : 800, audioContext.currentTime);
-			oscillator.type = darkMode ? 'sawtooth' : 'sine';
+			oscillator.frequency.setValueAtTime(deathMode ? 200 : 800, audioContext.currentTime);
+			oscillator.type = deathMode ? 'sawtooth' : 'sine';
 			gainNode.gain.setValueAtTime(0.08, audioContext.currentTime);
 			gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.05);
 			oscillator.start(audioContext.currentTime);
@@ -599,7 +600,7 @@
 
 		ctx.clearRect(0, 0, actualSize, actualSize);
 
-		if (darkMode) {
+		if (deathMode) {
 			// Gothic outer border (no shadow for performance)
 			ctx.beginPath();
 			ctx.arc(center, center, radius + 15, 0, 2 * Math.PI);
@@ -613,6 +614,13 @@
 			ctx.strokeStyle = '#8B0000';
 			ctx.lineWidth = 2;
 			ctx.stroke();
+		} else if (darkMode) {
+			// Dark mode border
+			ctx.beginPath();
+			ctx.arc(center, center, radius + 10, 0, 2 * Math.PI);
+			ctx.strokeStyle = '#475569';
+			ctx.lineWidth = 6;
+			ctx.stroke();
 		} else {
 			// Simple border for light mode
 			ctx.beginPath();
@@ -624,10 +632,10 @@
 
 		if (active.length === 0) {
 			ctx.fillStyle = darkMode ? '#666' : '#9ca3af';
-			ctx.font = darkMode ? "bold 20px 'Creepster', cursive" : "bold 18px system-ui, sans-serif";
+			ctx.font = deathMode ? "bold 20px 'Creepster', cursive" : "bold 18px system-ui, sans-serif";
 			ctx.textAlign = 'center';
 			ctx.textBaseline = 'middle';
-			ctx.fillText(darkMode ? 'Add souls...' : 'Add participants', center, center);
+			ctx.fillText(deathMode ? 'Add souls...' : 'Add participants', center, center);
 			return;
 		}
 
@@ -664,7 +672,7 @@
 			ctx.fill();
 
 			// Slice border
-			ctx.strokeStyle = darkMode ? 'rgba(139, 0, 0, 0.5)' : 'rgba(255, 255, 255, 0.3)';
+			ctx.strokeStyle = deathMode ? 'rgba(139, 0, 0, 0.5)' : darkMode ? 'rgba(100, 116, 139, 0.4)' : 'rgba(255, 255, 255, 0.3)';
 			ctx.lineWidth = 2;
 			ctx.stroke();
 
@@ -678,7 +686,7 @@
 			ctx.shadowOffsetX = 1;
 			ctx.shadowOffsetY = 1;
 			ctx.fillStyle = '#fff';
-			ctx.font = darkMode ? `${fontSize}px 'Creepster', cursive` : `bold ${fontSize}px system-ui, sans-serif`;
+			ctx.font = deathMode ? `${fontSize}px 'Creepster', cursive` : `bold ${fontSize}px system-ui, sans-serif`;
 			ctx.textBaseline = 'middle';
 			ctx.textAlign = 'center';
 
@@ -697,7 +705,7 @@
 		// Draw center circle (responsive)
 		const centerCircleRadius = Math.max(15, actualSize * 0.08);
 
-		if (darkMode) {
+		if (deathMode) {
 			// Center circle
 			ctx.beginPath();
 			ctx.arc(center, center, centerCircleRadius, 0, 2 * Math.PI);
@@ -723,12 +731,12 @@
 			ctx.textBaseline = 'middle';
 			ctx.fillText('💀', center, center);
 		} else {
-			// Simple center for light mode
+			// Simple center for light/dark mode
 			ctx.beginPath();
 			ctx.arc(center, center, centerCircleRadius, 0, 2 * Math.PI);
-			ctx.fillStyle = '#1e1b4b';
+			ctx.fillStyle = darkMode ? '#1e293b' : '#1e1b4b';
 			ctx.fill();
-			ctx.strokeStyle = '#fff';
+			ctx.strokeStyle = darkMode ? '#475569' : '#fff';
 			ctx.lineWidth = Math.max(2, actualSize * 0.004);
 			ctx.stroke();
 		}
@@ -742,7 +750,7 @@
 		const center = actualSize / 2;
 		const pointerSize = Math.max(15, actualSize * 0.07);
 
-		let pointerColor = darkMode ? '#8B0000' : '#10b981';
+		let pointerColor = deathMode ? '#8B0000' : '#10b981';
 		if (active.length > 0) {
 			const sliceAngle = (2 * Math.PI) / active.length;
 			const normalizedRotation = ((rotation % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
@@ -755,7 +763,7 @@
 		ctx.save();
 		ctx.translate(actualSize - 10, center);
 
-		if (darkMode) {
+		if (deathMode) {
 			// Dagger/blade shape
 			ctx.beginPath();
 			ctx.moveTo(10, -pointerSize * 0.8);

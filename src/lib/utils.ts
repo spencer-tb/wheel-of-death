@@ -110,8 +110,8 @@ export const DARK_SLICE_COLORS = [
 	'#0D0D0D', // near black
 ];
 
-export function getSliceColor(index: number, darkMode: boolean = true, colorScheme: keyof typeof COLOR_SCHEMES = 'default'): string {
-	if (darkMode) {
+export function getSliceColor(index: number, darkMode: boolean = true, colorScheme: keyof typeof COLOR_SCHEMES = 'default', deathMode: boolean = false): string {
+	if (deathMode) {
 		return DARK_SLICE_COLORS[index % DARK_SLICE_COLORS.length];
 	}
 	const colors = COLOR_SCHEMES[colorScheme];

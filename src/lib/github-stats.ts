@@ -58,7 +58,7 @@ interface ForkSpec {
 	placeholder: string | null;
 	// Candidate headliner EIPs for a fork with no meta EIP yet, with the
 	// EELS branch carrying the work when it lives outside eips/<fork>/
-	headliners: { eip: number; branch: string | null }[];
+	headliners: { eip: number; branch: string | null; note?: string }[];
 	declinedFrom: number | null; // meta EIP whose declined EIPs roll forward to this fork
 	releasePrefixes: string[]; // release tags that belong to this fork
 }
@@ -77,11 +77,12 @@ const FORKS: ForkSpec[] = [
 		module: null,
 		eipPrefix: null,
 		placeholder: 'No meta EIP or fork branch yet. Headliners get picked first, the rest of the scope follows.',
-		// Multidimensional gas, binary trees, in-mempool proof aggregation
+		// Multidimensional gas, the partitioned binary tree (successor of
+		// EIP-7864, and what projects/binary-trie implements), in-mempool
+		// proof aggregation
 		headliners: [
 			{ eip: 7999, branch: null },
-			{ eip: 7864, branch: 'projects/binary-trie' },
-			{ eip: 8297, branch: 'projects/binary-trie' },
+			{ eip: 8297, branch: 'projects/binary-trie', note: 'supersedes EIP-7864' },
 			{ eip: 8288, branch: null }
 		],
 		declinedFrom: 8081,
@@ -589,9 +590,11 @@ async function buildCandidatesFork(token: string, spec: ForkSpec): Promise<ForkV
 		spec.declinedFrom ? raw(`ethereum/EIPs/master/EIPS/eip-${spec.declinedFrom}.md`) : Promise.resolve(null),
 		...spec.headliners.map((h) => eipFrontMatter(h.eip))
 	]);
-	const headliners = spec.headliners.map((h, i) =>
-		candidateRow(h.eip, fronts[i]?.title ?? `EIP-${h.eip}`, 'PFI', fronts[i] ? `${fronts[i].status} in ethereum/EIPs` : null, h.branch ?? branches.get(h.eip) ?? null)
-	);
+	const headliners = spec.headliners.map((h, i) => {
+		const status = fronts[i] ? `${fronts[i].status} in ethereum/EIPs` : null;
+		const note = [status, h.note].filter(Boolean).join(', ') || null;
+		return candidateRow(h.eip, fronts[i]?.title ?? `EIP-${h.eip}`, 'PFI', note, h.branch ?? branches.get(h.eip) ?? null);
+	});
 	// Pull requests into the headliners' branches, one request
 	const withBranch = headliners.filter((h) => h.branch);
 	if (withBranch.length) {

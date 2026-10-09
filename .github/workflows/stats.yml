@@ -4,7 +4,10 @@ name: Repo stats
 # section. Uses the workflow's own GitHub token, so no extra secret.
 on:
   schedule:
+    # Every six hours, plus a fresh run for 08:00 Asia (UTC+8). GitHub cron
+    # is UTC only and may start a few minutes late under load.
     - cron: '17 */6 * * *'
+    - cron: '0 0 * * *'
   workflow_dispatch:
 
 concurrency:

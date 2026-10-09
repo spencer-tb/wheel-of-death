@@ -297,6 +297,9 @@
 										<td class="py-1.5 text-xs whitespace-nowrap">
 											{#if eip.branch}
 												<a href="https://github.com/{stats.repo}/tree/{eip.branch}" target="_blank" rel="noopener noreferrer" class="font-mono hover:underline" class:text-indigo-600={!darkMode} class:text-indigo-400={darkMode}>{eip.branch}</a>
+												{#each eip.prs.slice(0, 3) as pr (pr.number)}
+													<a href={pr.url} target="_blank" rel="noopener noreferrer" class="font-mono ml-2 hover:underline" title="{pr.state.toLowerCase()}: {pr.title}" class:text-emerald-600={pr.state === 'MERGED' && !darkMode} class:text-emerald-400={pr.state === 'MERGED' && darkMode} class:text-amber-600={pr.state === 'OPEN' && !darkMode} class:text-amber-400={pr.state === 'OPEN' && darkMode}>#{pr.number}</a>
+												{/each}
 											{:else}
 												<span class:text-gray-400={!darkMode} class:text-gray-500={darkMode}>—</span>
 											{/if}

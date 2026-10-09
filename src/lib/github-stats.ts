@@ -56,7 +56,9 @@ interface ForkSpec {
 	module: string | null;
 	eipPrefix: string | null;
 	placeholder: string | null;
-	headliners: number[]; // candidate headliner EIPs for a fork with no meta EIP yet
+	// Candidate headliner EIPs for a fork with no meta EIP yet, with the
+	// EELS branch carrying the work when it lives outside eips/<fork>/
+	headliners: { eip: number; branch: string | null }[];
 	declinedFrom: number | null; // meta EIP whose declined EIPs roll forward to this fork
 	releasePrefixes: string[]; // release tags that belong to this fork
 }
@@ -76,7 +78,12 @@ const FORKS: ForkSpec[] = [
 		eipPrefix: null,
 		placeholder: 'No meta EIP or fork branch yet. Headliners get picked first, the rest of the scope follows.',
 		// Multidimensional gas, binary trees, in-mempool proof aggregation
-		headliners: [7999, 7864, 8288],
+		headliners: [
+			{ eip: 7999, branch: null },
+			{ eip: 7864, branch: 'projects/binary-trie' },
+			{ eip: 8297, branch: 'projects/binary-trie' },
+			{ eip: 8288, branch: null }
+		],
 		declinedFrom: 8081,
 		releasePrefixes: []
 	}
@@ -580,11 +587,28 @@ async function buildCandidatesFork(token: string, spec: ForkSpec): Promise<ForkV
 	const [branches, declinedMeta, ...fronts] = await Promise.all([
 		prototypeBranches(token),
 		spec.declinedFrom ? raw(`ethereum/EIPs/master/EIPS/eip-${spec.declinedFrom}.md`) : Promise.resolve(null),
-		...spec.headliners.map((n) => eipFrontMatter(n))
+		...spec.headliners.map((h) => eipFrontMatter(h.eip))
 	]);
-	const headliners = spec.headliners.map((n, i) =>
-		candidateRow(n, fronts[i]?.title ?? `EIP-${n}`, 'PFI', fronts[i] ? `${fronts[i].status} in ethereum/EIPs` : null, branches.get(n) ?? null)
+	const headliners = spec.headliners.map((h, i) =>
+		candidateRow(h.eip, fronts[i]?.title ?? `EIP-${h.eip}`, 'PFI', fronts[i] ? `${fronts[i].status} in ethereum/EIPs` : null, h.branch ?? branches.get(h.eip) ?? null)
 	);
+	// Pull requests into the headliners' branches, one request
+	const withBranch = headliners.filter((h) => h.branch);
+	if (withBranch.length) {
+		const fields = withBranch.map((h) => `b${h.number}: search(query: "repo:${OWNER}/${NAME} is:pr base:${h.branch}", type: ISSUE, first: 30) { nodes { ...pr } }`);
+		const prData = await graphql<Record<string, { nodes: SearchPr[] }>>(
+			token,
+			`fragment pr on PullRequest { number title url state baseRefName }\nquery { ${fields.join('\n')} }`
+		);
+		for (const h of withBranch) {
+			const prs = (prData[`b${h.number}`]?.nodes ?? [])
+				.filter((p) => p && typeof p.number === 'number' && p.state !== 'CLOSED')
+				.map((p): EipPullRequest => ({ number: p.number, title: p.title, url: p.url, state: p.state, base: p.baseRefName }))
+				.sort((a, b) => b.number - a.number);
+			h.prs = prs.slice(0, 6);
+			h.status = prs.some((p) => p.state === 'OPEN') ? 'in review' : prs.some((p) => p.state === 'MERGED') ? 'on branch' : 'branch only';
+		}
+	}
 
 	// Listed anywhere in the known meta EIPs
 	const listed = new Set<number>();
@@ -600,7 +624,8 @@ async function buildCandidatesFork(token: string, spec: ForkSpec): Promise<ForkV
 		}
 	}
 	// Prototyped in EELS but not in any meta EIP any more
-	const dropped = [...branches.keys()].filter((n) => !listed.has(n) && !spec.headliners.includes(n) && !declined.some((d) => d.number === n)).sort((a, b) => a - b);
+	const headlinerNumbers = spec.headliners.map((h) => h.eip);
+	const dropped = [...branches.keys()].filter((n) => !listed.has(n) && !headlinerNumbers.includes(n) && !declined.some((d) => d.number === n)).sort((a, b) => a - b);
 	const droppedFronts = await Promise.all(dropped.map((n) => eipFrontMatter(n)));
 	dropped.forEach((n, i) => {
 		declined.push(candidateRow(n, droppedFronts[i]?.title ?? `EIP-${n}`, 'DFI', droppedFronts[i] ? `Prototyped, ${droppedFronts[i].status.toLowerCase()} in ethereum/EIPs` : 'Prototyped, not in ethereum/EIPs', branches.get(n) ?? null));

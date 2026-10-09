@@ -16,6 +16,8 @@ A fun randomizer wheel app to pick participants! Spin the wheel to decide who go
 - **Custom Colors** - Set individual colors for each participant
 - **Pictures** - Give a participant a photo and it fills their slice instead of a colour
 - **Avengers Mode** - One click assembles the team, pictures and all
+- **Headache Mode** - Flashing, inverting, wobbling everything, a backwards wheel that bounces around the page. Behind an epilepsy warning, never saved with a wheel
+- **Repo Stats** - Weekly overview of ethereum/execution-specs plus team reviewer/author leaderboards below the wheel, refreshed every six hours by a GitHub Actions job that writes to KV
 
 ## Tech Stack
 

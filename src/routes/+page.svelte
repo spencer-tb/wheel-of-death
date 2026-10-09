@@ -4,6 +4,7 @@
 	import Wheel from '$lib/components/Wheel.svelte';
 	import Timer from '$lib/components/Timer.svelte';
 	import ParticipantList from '$lib/components/ParticipantList.svelte';
+	import RepoStats from '$lib/components/RepoStats.svelte';
 	import type { Participant } from '$lib/types';
 	import { generateId, getRandomPhrase, getRandomQuestion, secureRandom } from '$lib/utils';
 	import { AVENGERS_ROSTER, getAvengersPhrase, getAvengersTagline } from '$lib/avengers';
@@ -66,24 +67,106 @@
 	let deathMode = $state(data.config?.darkMode ?? false);
 	let darkTheme = $state(false);
 	let avengersMode = $state(data.config?.avengersMode ?? false);
+	// Never saved with a wheel: nobody should open a shared link into flashing
+	let headacheMode = $state(false);
+	let showHeadacheWarning = $state(false);
 
-	// The theme plays every time the team assembles. Plays may overlap, but
-	// never more than MAX_THEME_PLAYS at once.
-	const AVENGERS_THEME = '/avengers/theme.m4a';
-	const MAX_THEME_PLAYS = 3;
-	let themePlayers: HTMLAudioElement[] = [];
-
-	function playAvengersTheme() {
-		if (!soundEnabled) return;
-		themePlayers = themePlayers.filter((audio) => !audio.ended && !audio.paused);
-		if (themePlayers.length >= MAX_THEME_PLAYS) return;
-		const audio = new Audio(AVENGERS_THEME);
-		audio.volume = 0.6;
-		audio.play().catch(() => {
-			// Browsers may block audio until the page has been interacted with
-		});
-		themePlayers.push(audio);
+	function toggleHeadacheMode() {
+		if (headacheMode) {
+			headacheMode = false;
+		} else {
+			showHeadacheWarning = true;
+		}
 	}
+
+	function confirmHeadacheMode() {
+		showHeadacheWarning = false;
+		headacheMode = true;
+	}
+
+	// Buttons and the wheel edge away from the cursor, but only so far:
+	// a cap on the shove keeps everything catchable
+	$effect(() => {
+		if (!headacheMode) return;
+		const RADIUS = 110;
+		const MAX_SHOVE = 48;
+		const offsets = new WeakMap<HTMLElement, { x: number; y: number }>();
+		let targets: HTMLElement[] = [];
+		const collect = () => {
+			targets = [...document.querySelectorAll<HTMLElement>('main button, .headache-wheel')];
+		};
+		collect();
+		const observer = new MutationObserver(collect);
+		observer.observe(document.body, { childList: true, subtree: true });
+
+		const onMove = (e: MouseEvent) => {
+			for (const el of targets) {
+				const current = offsets.get(el) ?? { x: 0, y: 0 };
+				const r = el.getBoundingClientRect();
+				// Measure from where the element would be without its shove
+				const cx = r.left + r.width / 2 - current.x;
+				const cy = r.top + r.height / 2 - current.y;
+				const dx = cx - e.clientX;
+				const dy = cy - e.clientY;
+				const d = Math.hypot(dx, dy) || 1;
+				const reach = RADIUS + Math.max(r.width, r.height) / 2;
+				let next = { x: 0, y: 0 };
+				if (d < reach) {
+					const shove = Math.min(MAX_SHOVE, (reach - d) * 0.6);
+					next = { x: (dx / d) * shove, y: (dy / d) * shove };
+				}
+				if (next.x !== current.x || next.y !== current.y) {
+					offsets.set(el, next);
+					el.style.setProperty('--dx', `${next.x.toFixed(1)}px`);
+					el.style.setProperty('--dy', `${next.y.toFixed(1)}px`);
+				}
+			}
+		};
+		window.addEventListener('mousemove', onMove, { passive: true });
+		return () => {
+			window.removeEventListener('mousemove', onMove);
+			observer.disconnect();
+			for (const el of targets) {
+				el.style.removeProperty('--dx');
+				el.style.removeProperty('--dy');
+			}
+		};
+	});
+
+	// Confetti keeps going off somewhere while headache mode is on
+	$effect(() => {
+		if (!headacheMode) return;
+		const burst = () =>
+			confetti({
+				particleCount: 60,
+				spread: 180,
+				startVelocity: 45,
+				scalar: 1.6,
+				shapes: ['circle', 'square', 'star'],
+				colors: ['#ff0080', '#00ff80', '#ffee00', '#00c3ff', '#ff8c00', '#8000ff'],
+				origin: { x: secureRandom(), y: secureRandom() * 0.8 }
+			});
+		burst();
+		const id = setInterval(burst, 900);
+		return () => clearInterval(id);
+	});
+
+	// One theme player. It pauses when the team disassembles or Sound goes
+	// off, and picks up from the same spot when either comes back.
+	const AVENGERS_THEME = '/avengers/theme.m4a';
+	let theme: HTMLAudioElement | null = null;
+
+	$effect(() => {
+		if (avengersMode && soundEnabled) {
+			theme ??= new Audio(AVENGERS_THEME);
+			theme.volume = 0.6;
+			theme.play().catch(() => {
+				// Browsers may block audio until the page has been interacted with
+			});
+		} else {
+			theme?.pause();
+		}
+	});
 	let fastMode = $state(data.config?.fastMode ?? false);
 	let soundEnabled = $state(data.config?.soundEnabled ?? true);
 	let idleSpinEnabled = $state(data.config?.idleSpinEnabled ?? true);
@@ -123,7 +206,8 @@
 	onMount(() => {
 		function updateSize() {
 			const isMobile = window.innerWidth < MOBILE_BREAKPOINT;
-			wheelSize = isMobile ? Math.min(window.innerWidth - 40, 500) : 750;
+			// Never below a sane minimum, even if the viewport reports a silly width
+			wheelSize = isMobile ? Math.max(160, Math.min(window.innerWidth - 40, 500)) : 750;
 		}
 		updateSize();
 		window.addEventListener('resize', updateSize);
@@ -352,7 +436,6 @@
 			: createParticipants(deathMode ? DEATH_NAMES : NORMAL_NAMES);
 		namesEdited = false;
 		currentTagline = getTagline(deathMode, avengersMode);
-		if (avengersMode) playAvengersTheme();
 	}
 
 	function resetAll() {
@@ -411,6 +494,12 @@
 	<title>{deathMode ? '🪦 Wheel of Death' : '🎉 Wheel of Fun'}</title>
 </svelte:head>
 
+{#snippet letters(text: string)}
+	{#each text.split('') as ch, i (i)}
+		<span class="letter" style="--i: {i}">{ch === ' ' ? '\u00a0' : ch}</span>
+	{/each}
+{/snippet}
+
 {#snippet settingsContent()}
 	<!-- Participants Section -->
 	<div class="flex items-center justify-between mb-4">
@@ -455,37 +544,6 @@
 	<!-- Settings Section -->
 	<div class="mt-5 pt-5 border-t" class:border-gray-200={!isDark} class:border-slate-700={isDark}>
 		<h3 class="text-lg font-semibold mb-4" class:text-gray-700={!isDark} class:text-gray-300={isDark}>Settings</h3>
-
-		<!-- Mode toggles for phones; desktop has them as buttons top right -->
-		<div class="flex items-center justify-between mb-3 min-[900px]:hidden">
-			<span class="text-sm" class:text-gray-600={!isDark} class:text-gray-400={isDark}>Death Mode</span>
-			<button
-				onclick={toggleDeathMode}
-				class="relative w-11 h-6 rounded-full transition-colors"
-				class:bg-red-600={deathMode}
-				class:bg-gray-300={!deathMode}
-			>
-				<span
-					class="absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform"
-					class:translate-x-5={deathMode}
-				></span>
-			</button>
-		</div>
-
-		<div class="flex items-center justify-between mb-3 min-[900px]:hidden">
-			<span class="text-sm" class:text-gray-600={!isDark} class:text-gray-400={isDark}>Avengers Mode</span>
-			<button
-				onclick={toggleAvengersMode}
-				class="relative w-11 h-6 rounded-full transition-colors"
-				class:bg-red-600={avengersMode}
-				class:bg-gray-300={!avengersMode}
-			>
-				<span
-					class="absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform"
-					class:translate-x-5={avengersMode}
-				></span>
-			</button>
-		</div>
 
 		<!-- Fast Mode Toggle -->
 		<div class="flex items-center justify-between mb-3">
@@ -664,9 +722,16 @@
 
 <main
 	class="min-h-screen pt-16 pb-8 px-4 relative transition-colors duration-300 max-[900px]:min-h-0 max-[900px]:flex-1 max-[900px]:pt-8 max-[900px]:pb-8 {isDark ? 'bg-slate-900' : 'bg-gradient-to-br from-slate-100 to-slate-200'}"
+	class:headache={headacheMode}
 >
+	{#if headacheMode}
+		<!-- Colour flashes and a periodic inversion over everything but the modals -->
+		<div class="headache-flash fixed inset-0 z-[45] pointer-events-none"></div>
+		<div class="headache-invert fixed inset-0 z-[45] pointer-events-none"></div>
+	{/if}
 	<!-- Toggle Buttons - Fixed position -->
-	<div class="fixed top-4 right-4 z-50 flex gap-2 max-[900px]:hidden">
+	<!-- Mode and theme buttons: pinned top right on desktop, a row above the title on phones -->
+	<div class="fixed top-4 right-4 z-50 flex gap-2 max-[900px]:static max-[900px]:justify-center max-[900px]:mb-6">
 		<!-- Death Mode Toggle -->
 		<button
 			onclick={toggleDeathMode}
@@ -699,6 +764,20 @@
 				<path d="M15.8 16.4l5.8 2.2-3.6 3.8-2.2-6z" />
 			</svg>
 		</button>
+		<!-- Headache Mode Toggle -->
+		<button
+			onclick={toggleHeadacheMode}
+			class="p-2 rounded-lg shadow-md transition-colors"
+			class:bg-white={!isDark && !headacheMode}
+			class:hover:bg-gray-50={!isDark && !headacheMode}
+			class:bg-slate-700={isDark && !headacheMode}
+			class:hover:bg-slate-600={isDark && !headacheMode}
+			class:bg-fuchsia-600={headacheMode}
+			class:hover:bg-fuchsia-500={headacheMode}
+			title={headacheMode ? 'Leave Headache Mode' : 'Enter Headache Mode'}
+		>
+			<span class="block w-5 h-5 text-center text-base leading-5 transition-all" class:grayscale={!headacheMode} class:opacity-60={!headacheMode}>🤯</span>
+		</button>
 		<!-- Dark Theme Toggle -->
 		<button
 			onclick={toggleDarkTheme}
@@ -721,10 +800,10 @@
 				</svg>
 			{/if}
 		</button>
-		<!-- Settings Toggle -->
+		<!-- Settings Toggle (desktop only; the panel is inline on phones) -->
 		<button
 			onclick={() => (showPanel = !showPanel)}
-			class="p-2 rounded-lg shadow-md transition-colors"
+			class="p-2 rounded-lg shadow-md transition-colors max-[900px]:hidden"
 			class:bg-white={!isDark}
 			class:hover:bg-gray-50={!isDark}
 			class:bg-slate-700={isDark}
@@ -739,18 +818,18 @@
 	</div>
 
 	<!-- Center content -->
-	<div class="flex flex-col items-center justify-center">
-		<header class="text-center mb-8 min-[900px]:mb-12">
+	<div class="flex flex-col items-center justify-center" class:headache-shake={headacheMode}>
+		<header class="text-center mb-8 min-[900px]:mb-12" class:headache-header={headacheMode}>
 			{#if deathMode}
-				<h1 class="text-7xl max-[900px]:text-5xl max-[800px]:text-4xl max-[500px]:text-3xl mb-4 text-white" style="font-family: 'Creepster', cursive;">Wheel of Death</h1>
-				<h2 class="text-3xl max-[900px]:text-2xl max-[800px]:text-xl max-[500px]:text-lg font-semibold text-gray-400" style="font-family: 'Creepster', cursive;">{currentTagline}</h2>
+				<h1 class="text-7xl max-[900px]:text-5xl max-[800px]:text-4xl max-[500px]:text-3xl mb-4 text-white" style="font-family: 'Creepster', cursive;">{#if headacheMode}{@render letters('Wheel of Death')}{:else}Wheel of Death{/if}</h1>
+				<h2 class="text-3xl max-[900px]:text-2xl max-[800px]:text-xl max-[500px]:text-lg font-semibold text-gray-400" style="font-family: 'Creepster', cursive;">{#if headacheMode}{@render letters(currentTagline)}{:else}{currentTagline}{/if}</h2>
 			{:else}
-				<h1 class="text-7xl max-[900px]:text-5xl max-[800px]:text-4xl max-[500px]:text-3xl mb-4" class:text-indigo-600={!isDark} class:text-indigo-400={isDark} style="font-family: 'Fredoka', sans-serif;">Wheel of Fun</h1>
-				<h2 class="text-3xl max-[900px]:text-2xl max-[800px]:text-xl max-[500px]:text-lg" class:text-gray-500={!isDark} class:text-gray-400={isDark} style="font-family: 'Fredoka', sans-serif;">{currentTagline}</h2>
+				<h1 class="text-7xl max-[900px]:text-5xl max-[800px]:text-4xl max-[500px]:text-3xl mb-4" class:text-indigo-600={!isDark} class:text-indigo-400={isDark} style="font-family: 'Fredoka', sans-serif;">{#if headacheMode}{@render letters('Wheel of Fun')}{:else}Wheel of Fun{/if}</h1>
+				<h2 class="text-3xl max-[900px]:text-2xl max-[800px]:text-xl max-[500px]:text-lg" class:text-gray-500={!isDark} class:text-gray-400={isDark} style="font-family: 'Fredoka', sans-serif;">{#if headacheMode}{@render letters(currentTagline)}{:else}{currentTagline}{/if}</h2>
 			{/if}
 		</header>
 
-		<div class="flex flex-col items-center gap-6">
+		<div class="flex flex-col items-center gap-6" class:headache-wheel={headacheMode}>
 			<Wheel
 				{participants}
 				size={wheelSize}
@@ -762,6 +841,7 @@
 				{soundEnabled}
 				{idleSpinEnabled}
 				{avengersMode}
+				{headacheMode}
 				{colorScheme}
 			/>
 
@@ -773,6 +853,7 @@
 		class="hidden max-[900px]:block w-full mt-8 rounded-xl shadow-lg p-6 transition-colors"
 		class:bg-white={!isDark}
 		class:bg-slate-800={isDark}
+		class:headache-wobble={headacheMode}
 	>
 		{@render settingsContent()}
 	</div>
@@ -785,6 +866,7 @@
 			aria-label="Close settings"
 		></button>
 		<div
+			class:headache-wobble={headacheMode}
 			class="fixed rounded-xl shadow-lg p-8 z-40 overflow-y-auto transition-colors
 				   top-16 right-4 w-[440px] max-h-[calc(100vh-5rem)]
 				   max-[900px]:hidden"
@@ -802,6 +884,7 @@
 				class="rounded-2xl shadow-2xl max-w-sm w-full p-6 text-center"
 				class:bg-white={!isDark}
 				class:bg-slate-800={isDark}
+				class:headache-card={headacheMode}
 			>
 				<p
 					class="text-lg tracking-wide mb-2"
@@ -826,7 +909,7 @@
 					class:text-indigo-500={!deathMode}
 					class:text-red-500={deathMode}
 					style={deathMode ? "font-family: 'Creepster', cursive;" : ""}
-				>{selectedParticipant.name}</p>
+				>{#if headacheMode}{@render letters(selectedParticipant.name)}{:else}{selectedParticipant.name}{/if}</p>
 
 				{#if icebreakerEnabled && currentQuestion}
 					<div
@@ -890,6 +973,46 @@
 		</div>
 	{/if}
 
+	<!-- Headache Mode warning -->
+	{#if showHeadacheWarning}
+		<div class="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+			<div
+				class="rounded-2xl shadow-2xl max-w-sm w-full p-6 text-center"
+				class:bg-white={!isDark}
+				class:bg-slate-800={isDark}
+			>
+				<p class="text-4xl mb-3">⚠️</p>
+				<h2 class="text-2xl font-bold mb-3" class:text-gray-900={!isDark} class:text-white={isDark}>Are you sure?</h2>
+				<p class="text-sm mb-2" class:text-gray-600={!isDark} class:text-gray-300={isDark}>
+					Headache mode flashes colours, inverts the screen, shakes everything, makes buttons dodge your cursor, and sends the wheel bouncing around the page while it spins backwards.
+				</p>
+				<p class="text-sm font-semibold mb-6" class:text-red-600={!isDark} class:text-red-400={isDark}>
+					Not recommended for anyone with epilepsy or photosensitivity.
+				</p>
+				<div class="flex gap-3">
+					<button
+						onclick={() => (showHeadacheWarning = false)}
+						class="flex-1 px-4 py-3 rounded-lg transition-colors font-medium"
+						class:bg-gray-100={!isDark}
+						class:text-gray-700={!isDark}
+						class:hover:bg-gray-200={!isDark}
+						class:bg-slate-700={isDark}
+						class:text-gray-300={isDark}
+						class:hover:bg-slate-600={isDark}
+					>
+						No thanks
+					</button>
+					<button
+						onclick={confirmHeadacheMode}
+						class="flex-1 px-4 py-3 rounded-lg transition-colors font-medium bg-fuchsia-600 text-white hover:bg-fuchsia-500"
+					>
+						I'm sure
+					</button>
+				</div>
+			</div>
+		</div>
+	{/if}
+
 	<!-- Toast Notification -->
 	{#if showToast}
 		<div
@@ -904,6 +1027,8 @@
 	{/if}
 
 </main>
+
+<RepoStats darkMode={isDark} panelOpen={showPanel} />
 
 <footer
 	class="py-4 px-4 min-[640px]:px-8 min-[900px]:px-16 text-sm transition-colors"
@@ -946,10 +1071,13 @@
 </footer>
 
 <style>
+	/* clip, not hidden: hidden turns body into a scroll container that can
+	   never scroll, and overscroll-behavior then blocks the page from
+	   scrolling at all under touch and wheel input */
 	:global(html, body) {
 		margin: 0;
 		padding: 0;
-		overflow-x: hidden;
+		overflow-x: clip;
 		overscroll-behavior: none;
 	}
 
@@ -957,10 +1085,219 @@
 		display: none;
 	}
 
-	@media (min-width: 640px) and (max-width: 1099px) {
-		.footer-bullet-centered {
-			display: inline;
-		}
+	/* Headache mode. Transforms and filters only go on elements that have no
+	   fixed-position descendants, since either would re-anchor them. */
+	:global(main.headache) {
+		background: linear-gradient(270deg, #ff0080, #ff8c00, #ffee00, #00ff80, #00c3ff, #8000ff, #ff0080);
+		background-size: 1400% 1400%;
+		animation: headache-bg 1.2s ease-in-out infinite alternate;
+		cursor: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='36' height='36'><text y='30' font-size='30'>%F0%9F%A4%AF</text></svg>") 18 18, crosshair;
+	}
+
+	:global(.headache-shake) {
+		animation: headache-shake 0.11s linear infinite alternate, headache-zoom 0.9s ease-in-out infinite alternate;
+	}
+
+	:global(.headache-flash) {
+		animation: headache-flash 1.33s steps(1, end) infinite;
+	}
+
+	:global(.headache-invert) {
+		background: #fff;
+		mix-blend-mode: difference;
+		animation: headache-invert 2s steps(1, end) infinite;
+	}
+
+	:global(.headache-wheel) {
+		animation:
+			headache-hue-blur 1s linear infinite,
+			headache-wobble 0.7s ease-in-out infinite alternate,
+			headache-flip 2.7s steps(1, end) infinite;
+	}
+
+	:global(.headache-header) {
+		animation: headache-hue 0.8s linear infinite reverse, headache-text 0.35s ease-in-out infinite alternate;
+	}
+
+	:global(.headache-header h2) {
+		animation: headache-mirror 0.9s steps(1, end) infinite, headache-bob 0.45s ease-in-out infinite alternate;
+	}
+
+	:global(.headache-wobble) {
+		animation:
+			headache-wobble-soft 0.9s ease-in-out infinite alternate,
+			headache-hue 2s linear infinite,
+			headache-flip 4.1s steps(1, end) 1.3s infinite;
+	}
+
+	:global(main.headache li) {
+		animation: headache-drift 0.45s ease-in-out infinite alternate;
+	}
+
+	:global(main.headache li:nth-child(odd)) {
+		animation-direction: alternate-reverse;
+	}
+
+	:global(main.headache button) {
+		animation: headache-tilt 0.4s ease-in-out infinite alternate;
+	}
+
+	:global(.headache-card) {
+		animation:
+			headache-card-in 1.4s cubic-bezier(0.3, 0.9, 0.3, 1.1) both,
+			headache-card-wobble 1.6s ease-in-out 1.4s infinite,
+			headache-hue-blur 0.6s linear infinite;
+	}
+
+	:global(.headache-card p) {
+		animation: headache-text 0.3s ease-in-out infinite alternate;
+	}
+
+	/* Every bit of text wanders on its own clock */
+	:global(main.headache :is(p, h3, li, label)) {
+		animation: headache-jitter 0.5s ease-in-out infinite alternate;
+	}
+
+	:global(main.headache :is(span:not(.letter):not(.flex), a, strong)) {
+		display: inline-block;
+		animation: headache-jitter 0.5s ease-in-out infinite alternate;
+	}
+
+	:global(main.headache :is(p, h3, li, label, span:not(.letter):not(.flex), a, strong):nth-child(2n)) {
+		animation-delay: -0.17s;
+		animation-direction: alternate-reverse;
+	}
+
+	:global(main.headache :is(p, h3, li, label, span:not(.letter):not(.flex), a, strong):nth-child(3n)) {
+		animation-delay: -0.31s;
+		animation-duration: 0.37s;
+	}
+
+	:global(main.headache :is(p, h3, li, label, span:not(.letter):not(.flex), a, strong):nth-child(5n)) {
+		animation-delay: -0.09s;
+		animation-duration: 0.63s;
+	}
+
+	:global(.letter) {
+		display: inline-block;
+		color: hsl(calc(var(--i) * 47deg) 100% 50%);
+		animation: headache-letter 0.55s ease-in-out infinite alternate;
+		animation-delay: calc(var(--i) * -0.137s);
+	}
+
+	:global(.letter:nth-child(2n)) {
+		animation-direction: alternate-reverse;
+		animation-duration: 0.43s;
+	}
+
+	:global(.headache-card button) {
+		animation: headache-tilt 0.25s ease-in-out infinite alternate, headache-bob 0.5s ease-in-out infinite alternate-reverse;
+	}
+
+	@keyframes headache-bg {
+		from { background-position: 0% 50%; }
+		to { background-position: 100% 50%; }
+	}
+
+	@keyframes headache-flash {
+		0% { background: rgba(255, 0, 0, 0.45); }
+		25% { background: rgba(0, 255, 0, 0.45); }
+		50% { background: rgba(0, 0, 255, 0.45); }
+		75% { background: rgba(255, 255, 0, 0.45); }
+	}
+
+	@keyframes headache-invert {
+		0%, 84% { opacity: 0; }
+		85%, 100% { opacity: 1; }
+	}
+
+	@keyframes headache-hue {
+		to { filter: hue-rotate(360deg); }
+	}
+
+	@keyframes headache-hue-blur {
+		0% { filter: hue-rotate(0deg) blur(0); }
+		50% { filter: hue-rotate(180deg) blur(3px) contrast(1.6); }
+		100% { filter: hue-rotate(360deg) blur(0); }
+	}
+
+	@keyframes headache-shake {
+		from { translate: -7px 5px; }
+		to { translate: 7px -5px; }
+	}
+
+	@keyframes headache-zoom {
+		from { scale: 0.9; }
+		to { scale: 1.14; }
+	}
+
+	/* Mirror-flip for a moment every cycle; scale composes with transform */
+	@keyframes headache-flip {
+		0% { scale: 1 1; }
+		60% { scale: -1 1; }
+		72% { scale: 1 1; }
+	}
+
+	@keyframes headache-wobble {
+		from { transform: translate(var(--dx, 0px), var(--dy, 0px)) rotate(-9deg) scale(0.9) skew(-6deg) translateX(-14px); }
+		to { transform: translate(var(--dx, 0px), var(--dy, 0px)) rotate(9deg) scale(1.1) skew(6deg) translateX(14px); }
+	}
+
+	@keyframes headache-wobble-soft {
+		from { transform: rotate(-3deg) translate(-14px, -10px); }
+		to { transform: rotate(3deg) translate(14px, 10px); }
+	}
+
+	@keyframes headache-text {
+		from { transform: skew(-22deg, 4deg) translateX(-18px) scale(0.92); letter-spacing: -3px; }
+		to { transform: skew(22deg, -4deg) translateX(18px) scale(1.1); letter-spacing: 8px; }
+	}
+
+	@keyframes headache-jitter {
+		from { transform: translate(-7px, -5px) rotate(-6deg); }
+		to { transform: translate(7px, 5px) rotate(6deg); }
+	}
+
+	@keyframes headache-letter {
+		0% { transform: translate(-8px, -18px) rotate(-30deg) scale(0.75); }
+		50% { transform: translate(10px, 12px) rotate(25deg) scale(1.4); }
+		100% { transform: translate(-5px, 16px) rotate(-12deg) scale(1.05); }
+	}
+
+	@keyframes headache-bob {
+		from { translate: 0 -10px; }
+		to { translate: 0 10px; }
+	}
+
+	@keyframes headache-mirror {
+		0% { transform: scaleX(1); }
+		50% { transform: scaleX(-1); }
+	}
+
+	@keyframes headache-drift {
+		from { transform: translateX(-18px) rotate(-2deg); }
+		to { transform: translateX(18px) rotate(2deg); }
+	}
+
+	@keyframes headache-tilt {
+		from { transform: translate(var(--dx, 0px), var(--dy, 0px)) rotate(-15deg) scale(0.95); }
+		to { transform: translate(var(--dx, 0px), var(--dy, 0px)) rotate(15deg) scale(1.08); }
+	}
+
+	@keyframes headache-card-in {
+		from { transform: rotate(-1440deg) scale(0) translateY(-600px); }
+		to { transform: rotate(0deg) scale(1) translateY(0); }
+	}
+
+	/* Not a pendulum: every quarter lands somewhere different, with a flip */
+	@keyframes headache-card-wobble {
+		0% { transform: rotate(-18deg) scale(0.85) translate(-40px, 20px); }
+		20% { transform: rotate(14deg) scale(1.2) translate(50px, -30px) skew(8deg); }
+		40% { transform: rotate(-6deg) scale(1) translate(-20px, 50px) rotateY(180deg); }
+		55% { transform: rotate(22deg) scale(0.9) translate(60px, 10px) rotateY(360deg); }
+		75% { transform: rotate(-25deg) scale(1.15) translate(-60px, -40px) skew(-10deg); }
+		90% { transform: rotate(8deg) scale(0.8) translate(30px, 40px) rotateX(180deg); }
+		100% { transform: rotate(-18deg) scale(0.85) translate(-40px, 20px) rotateX(360deg); }
 	}
 
 	:global(.blood-splat) {

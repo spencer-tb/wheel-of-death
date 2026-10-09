@@ -180,7 +180,7 @@
 		</div>
 
 		<!-- Participant list -->
-		<ul class="space-y-1 max-h-48 overflow-y-auto pr-1">
+		<ul class="space-y-1 max-h-48 overflow-y-auto pr-1" data-participants>
 			{#each participants as participant (participant.id)}
 				<li
 					class="flex items-center justify-between p-2 rounded-lg transition-colors text-sm"

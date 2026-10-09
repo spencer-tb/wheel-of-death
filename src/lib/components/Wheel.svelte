@@ -16,9 +16,10 @@
 		colorScheme?: 'default' | 'rainbow' | 'pastel' | 'ocean' | 'sunset';
 		idleSpinEnabled?: boolean;
 		avengersMode?: boolean;
+		headacheMode?: boolean;
 	}
 
-	let { participants, onSpinComplete, onSpinStart, size = 400, onHover, darkMode = true, deathMode = false, fastMode = false, soundEnabled = true, colorScheme = 'default', idleSpinEnabled = true, avengersMode = false }: Props = $props();
+	let { participants, onSpinComplete, onSpinStart, size = 400, onHover, darkMode = true, deathMode = false, fastMode = false, soundEnabled = true, colorScheme = 'default', idleSpinEnabled = true, avengersMode = false, headacheMode = false }: Props = $props();
 
 	let canvas: HTMLCanvasElement;
 	let isSpinning = $state(false);
@@ -29,6 +30,57 @@
 	let isHovering = $state(false);
 	let audioContext: AudioContext | null = null;
 	let audioUnlocked = false;
+
+	// Headache mode spins the wheel the wrong way and, while it spins,
+	// bounces it around the viewport
+	const spinDirection = $derived(headacheMode ? -1 : 1);
+	let bounceX = $state(0);
+	let bounceY = $state(0);
+	let bouncing = $state(false);
+	let driftVx = 170;
+	let driftVy = 130;
+	const IDLE_DRIFT_SPEED = 220;
+
+	// Move the wheel by its velocity, bouncing off the viewport edges
+	function stepDrift(dt: number) {
+		const rect = canvas.getBoundingClientRect();
+		const margin = 8;
+		const minX = bounceX - rect.left + margin;
+		const maxX = bounceX + window.innerWidth - rect.right - margin;
+		const minY = bounceY - rect.top + margin;
+		const maxY = bounceY + window.innerHeight - rect.bottom - margin;
+		let x = bounceX + driftVx * dt;
+		let y = bounceY + driftVy * dt;
+		if (minX > maxX) {
+			x = 0;
+		} else if (x < minX || x > maxX) {
+			driftVx = -driftVx;
+			x = Math.min(maxX, Math.max(minX, x));
+		}
+		if (minY > maxY) {
+			y = 0;
+		} else if (y < minY || y > maxY) {
+			driftVy = -driftVy;
+			y = Math.min(maxY, Math.max(minY, y));
+		}
+		bounceX = x;
+		bounceY = y;
+	}
+
+	function setDriftSpeed(speed: number) {
+		const current = Math.hypot(driftVx, driftVy) || 1;
+		driftVx = (driftVx / current) * speed;
+		driftVy = (driftVy / current) * speed;
+	}
+
+	// Come home once headache mode ends
+	$effect(() => {
+		if (!headacheMode && !isSpinning) {
+			bouncing = false;
+			bounceX = 0;
+			bounceY = 0;
+		}
+	});
 
 	// Decoded participant pictures, keyed by their data URL
 	const avatarCache = new Map<string, HTMLImageElement>();
@@ -528,7 +580,11 @@
 		try {
 			initAudio();
 
-			if (deathMode) {
+			if (headacheMode) {
+				// Both at once
+				playScarySound(SCARY_SOUNDS[Math.floor(secureRandom() * SCARY_SOUNDS.length)]);
+				playFunSound(FUN_SOUNDS[Math.floor(secureRandom() * FUN_SOUNDS.length)]);
+			} else if (deathMode) {
 				// Pick random scary sound
 				const soundIndex = Math.floor(secureRandom() * SCARY_SOUNDS.length);
 				playScarySound(SCARY_SOUNDS[soundIndex]);
@@ -550,8 +606,9 @@
 			const gainNode = audioContext.createGain();
 			oscillator.connect(gainNode);
 			gainNode.connect(audioContext.destination);
-			oscillator.frequency.setValueAtTime(deathMode ? 200 : 800, audioContext.currentTime);
-			oscillator.type = deathMode ? 'sawtooth' : 'sine';
+			oscillator.frequency.setValueAtTime(headacheMode ? 150 + secureRandom() * 1850 : deathMode ? 200 : 800, audioContext.currentTime);
+			const squeaks: OscillatorType[] = ['sine', 'square', 'sawtooth', 'triangle'];
+			oscillator.type = headacheMode ? squeaks[Math.floor(secureRandom() * squeaks.length)] : deathMode ? 'sawtooth' : 'sine';
 			gainNode.gain.setValueAtTime(0.08, audioContext.currentTime);
 			gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.05);
 			oscillator.start(audioContext.currentTime);
@@ -577,7 +634,12 @@
 
 			const delta = currentTime - lastTime;
 			lastTime = currentTime;
-			currentRotation += idleSpeed * delta;
+			currentRotation += spinDirection * idleSpeed * (headacheMode ? 5 : 1) * delta;
+
+			if (headacheMode) {
+				bouncing = true;
+				stepDrift(delta / 1000);
+			}
 
 			const ctx = canvas?.getContext('2d');
 			if (ctx) {
@@ -663,94 +725,24 @@
 			return;
 		}
 
-		ctx.save();
-		ctx.translate(center, center);
-		ctx.rotate(rotation);
-
-		const sliceAngle = (2 * Math.PI) / active.length;
-		const fontSize = Math.max(12, actualSize * 0.045);
-
-		active.forEach((participant, i) => {
-			const startAngle = i * sliceAngle - Math.PI / 2;
-			const endAngle = startAngle + sliceAngle;
-			const midAngle = startAngle + sliceAngle / 2;
-
-			const traceSlice = () => {
-				ctx.beginPath();
-				ctx.moveTo(0, 0);
-				ctx.arc(0, 0, radius, startAngle, endAngle);
-				ctx.closePath();
-			};
-
-			// A picture replaces the slice colour once it has decoded
-			const picture = participant.image ? getAvatar(participant.image) : null;
-			if (picture) {
-				traceSlice();
-				ctx.save();
-				ctx.clip();
-				drawSlicePicture(ctx, picture, midAngle, sliceAngle, radius);
-				ctx.restore();
-			} else {
-				// Draw slice with gradient
-				const gradient = ctx.createRadialGradient(0, 0, 0, 0, 0, radius);
-				const baseColor = participant.color || getSliceColor(i, darkMode, colorScheme, deathMode);
-				if (deathMode) {
-					gradient.addColorStop(0, '#1a1a2e');
-					gradient.addColorStop(0.3, baseColor);
-					gradient.addColorStop(1, baseColor);
-				} else {
-					gradient.addColorStop(0, '#ffffff');
-					gradient.addColorStop(0.2, baseColor);
-					gradient.addColorStop(1, baseColor);
-				}
-				traceSlice();
-				ctx.fillStyle = gradient;
-				ctx.fill();
-			}
-
-			// Slice border
-			traceSlice();
-			ctx.strokeStyle = deathMode ? 'rgba(139, 0, 0, 0.5)' : darkMode ? 'rgba(100, 116, 139, 0.4)' : 'rgba(255, 255, 255, 0.3)';
-			ctx.lineWidth = 2;
-			ctx.stroke();
-
-			// Draw text
-			ctx.save();
-			ctx.rotate(midAngle);
-
-			// Simple text shadow for readability
-			ctx.shadowColor = 'rgba(0, 0, 0, 0.5)';
-			ctx.shadowBlur = 2;
-			ctx.shadowOffsetX = 1;
-			ctx.shadowOffsetY = 1;
-			ctx.fillStyle = '#fff';
-			ctx.font = deathMode ? `${fontSize}px 'Creepster', cursive` : `bold ${fontSize}px system-ui, sans-serif`;
-			ctx.textBaseline = 'middle';
-			ctx.textAlign = 'center';
-
-			const text = participant.name.length > 12
-				? participant.name.substring(0, 12) + '..'
-				: participant.name;
-
-			// Position text in the middle of the slice
-			const textRadius = radius * 0.65;
-			if (picture) {
-				// Outline keeps the name legible over a busy photo
-				ctx.lineJoin = 'round';
-				ctx.lineWidth = Math.max(2, fontSize * 0.12);
-				ctx.strokeStyle = 'rgba(0, 0, 0, 0.55)';
-				ctx.strokeText(text, textRadius, 0);
-			}
-			ctx.fillText(text, textRadius, 0);
-			ctx.restore();
-		});
-
-		ctx.restore();
+		drawFace(ctx, rotation, active);
 
 		// Draw center circle (responsive)
 		const centerCircleRadius = Math.max(15, actualSize * 0.08);
 
-		if (deathMode) {
+		if (headacheMode && typeof ctx.createConicGradient === 'function') {
+			// Spinning rainbow hub
+			const rainbow = ctx.createConicGradient(performance.now() / 300, center, center);
+			const stops = ['#ff0000', '#ffff00', '#00ff00', '#00ffff', '#0000ff', '#ff00ff', '#ff0000'];
+			stops.forEach((color, k) => rainbow.addColorStop(k / (stops.length - 1), color));
+			ctx.beginPath();
+			ctx.arc(center, center, centerCircleRadius, 0, 2 * Math.PI);
+			ctx.fillStyle = rainbow;
+			ctx.fill();
+			ctx.strokeStyle = '#fff';
+			ctx.lineWidth = Math.max(2, actualSize * 0.006);
+			ctx.stroke();
+		} else if (deathMode) {
 			// Center circle
 			ctx.beginPath();
 			ctx.arc(center, center, centerCircleRadius, 0, 2 * Math.PI);
@@ -799,19 +791,161 @@
 		drawPointer(ctx);
 	}
 
+	// The face of the wheel (slices, pictures, names) is expensive to paint,
+	// so it is rendered once into an offscreen canvas and only re-rendered
+	// when something it depends on changes. Each frame just rotates the
+	// bitmap, which keeps the idle spin cheap even with seven photos.
+	let faceCache: HTMLCanvasElement | null = null;
+	let faceCacheKey = '';
+
+	function faceKey(active: Participant[]): string {
+		const loaded = active.map((p) => (p.image ? (getAvatar(p.image) ? 'img' : 'pending') : ''));
+		return JSON.stringify([
+			active.map((p) => [p.id, p.name, p.color ?? '']),
+			loaded,
+			darkMode,
+			deathMode,
+			colorScheme,
+			actualSize,
+			dpr,
+			// Headache mode shuffles colours five times a second
+			headacheMode ? Math.floor(performance.now() / 200) : -1
+		]);
+	}
+
+	function drawFace(ctx: CanvasRenderingContext2D, rotation: number, active: Participant[]) {
+		const center = actualSize / 2;
+		const key = faceKey(active);
+		if (!faceCache || faceCacheKey !== key) {
+			renderFace(active);
+			faceCacheKey = key;
+		}
+		ctx.save();
+		ctx.translate(center, center);
+		ctx.rotate(rotation);
+		ctx.drawImage(faceCache!, -center, -center, actualSize, actualSize);
+		ctx.restore();
+	}
+
+	function renderFace(active: Participant[]) {
+		faceCache ??= document.createElement('canvas');
+		faceCache.width = actualSize * dpr;
+		faceCache.height = actualSize * dpr;
+		const ctx = faceCache.getContext('2d');
+		if (!ctx) return;
+		const center = actualSize / 2;
+		const radius = actualSize / 2 - 30;
+		ctx.scale(dpr, dpr);
+		ctx.translate(center, center);
+
+		const centerCircleRadius = Math.max(15, actualSize * 0.08);
+		const sliceAngle = (2 * Math.PI) / active.length;
+		const fontSize = Math.max(12, actualSize * 0.045);
+
+		active.forEach((participant, i) => {
+			const startAngle = i * sliceAngle - Math.PI / 2;
+			const endAngle = startAngle + sliceAngle;
+			const midAngle = startAngle + sliceAngle / 2;
+
+			const traceSlice = () => {
+				ctx.beginPath();
+				ctx.moveTo(0, 0);
+				ctx.arc(0, 0, radius, startAngle, endAngle);
+				ctx.closePath();
+			};
+
+			// A picture replaces the slice colour once it has decoded; the colour
+			// is still painted first so the rim the picture leaves bare matches
+			const picture = participant.image ? getAvatar(participant.image) : null;
+			{
+				// Draw slice with gradient
+				const gradient = ctx.createRadialGradient(0, 0, 0, 0, 0, radius);
+				// Headache mode shuffles the rainbow along one slice five times a second
+				const colorHop = headacheMode ? Math.floor(performance.now() / 200) : 0;
+				const baseColor = headacheMode
+					? getSliceColor(i + colorHop, darkMode, 'rainbow')
+					: participant.color || getSliceColor(i, darkMode, colorScheme, deathMode);
+				if (deathMode) {
+					gradient.addColorStop(0, '#1a1a2e');
+					gradient.addColorStop(0.3, baseColor);
+					gradient.addColorStop(1, baseColor);
+				} else {
+					gradient.addColorStop(0, '#ffffff');
+					gradient.addColorStop(0.2, baseColor);
+					gradient.addColorStop(1, baseColor);
+				}
+				traceSlice();
+				ctx.fillStyle = gradient;
+				ctx.fill();
+			}
+			if (picture) {
+				traceSlice();
+				ctx.save();
+				ctx.clip();
+				drawSlicePicture(ctx, picture, midAngle, sliceAngle, radius, centerCircleRadius);
+				ctx.restore();
+			}
+
+			// Slice border
+			traceSlice();
+			ctx.strokeStyle = deathMode ? 'rgba(139, 0, 0, 0.5)' : darkMode ? 'rgba(100, 116, 139, 0.4)' : 'rgba(255, 255, 255, 0.3)';
+			ctx.lineWidth = 2;
+			ctx.stroke();
+
+			// Draw text
+			ctx.save();
+			ctx.rotate(midAngle);
+
+			// Simple text shadow for readability
+			ctx.shadowColor = 'rgba(0, 0, 0, 0.5)';
+			ctx.shadowBlur = 2;
+			ctx.shadowOffsetX = 1;
+			ctx.shadowOffsetY = 1;
+			ctx.fillStyle = '#fff';
+			ctx.font = deathMode ? `${fontSize}px 'Creepster', cursive` : `bold ${fontSize}px system-ui, sans-serif`;
+			ctx.textBaseline = 'middle';
+			ctx.textAlign = 'center';
+
+			const text = participant.name.length > 12
+				? participant.name.substring(0, 12) + '..'
+				: participant.name;
+
+			// Position text in the middle of the slice
+			let textX = radius * 0.65;
+			if (headacheMode) {
+				// Mirror writing
+				ctx.translate(textX, 0);
+				ctx.scale(-1, 1);
+				textX = 0;
+			}
+			if (picture) {
+				// Outline keeps the name legible over a busy photo
+				ctx.lineJoin = 'round';
+				ctx.lineWidth = Math.max(2, fontSize * 0.12);
+				ctx.strokeStyle = 'rgba(0, 0, 0, 0.55)';
+				ctx.strokeText(text, textX, 0);
+			}
+			ctx.fillText(text, textX, 0);
+			ctx.restore();
+		});
+
+	}
+
 	// Paint a participant's picture across their slice. The context is
 	// centred on the wheel, rotated with it, and clipped to the wedge.
-	function drawSlicePicture(ctx: CanvasRenderingContext2D, image: HTMLImageElement, midAngle: number, sliceAngle: number, radius: number) {
-		const half = sliceAngle / 2;
-		// Bounding box of the wedge in a frame whose x axis runs along the
-		// middle of the slice; the picture is scaled to cover it
-		const xMin = half < Math.PI / 2 ? 0 : radius * Math.cos(half);
-		const yMax = radius * Math.sin(Math.min(half, Math.PI / 2));
-		const side = 1.1 * Math.max(radius - xMin, 2 * yMax);
+	// The hub hides the wedge's tip, so the picture only has to cover the
+	// visible part: anchored to the rim, as small as the widest visible
+	// span allows, which keeps it as zoomed out as it can be with no gaps.
+	function drawSlicePicture(ctx: CanvasRenderingContext2D, image: HTMLImageElement, midAngle: number, sliceAngle: number, radius: number, hubRadius: number) {
+		const half = Math.min(sliceAngle / 2, Math.PI / 2);
+		// Frame: x runs along the middle of the slice, 0 at the wheel centre
+		const rimWidth = 2 * radius * Math.sin(half);
+		const visibleLength = radius - hubRadius * 0.9;
+		const side = Math.max(rimWidth, visibleLength);
 
 		ctx.save();
 		ctx.rotate(midAngle);
-		ctx.translate((radius + xMin) / 2, 0);
+		ctx.translate(radius - side / 2, 0);
 		// Point the top of the picture at the rim
 		ctx.rotate(Math.PI / 2);
 		ctx.drawImage(image, -side / 2, -side / 2, side, side);
@@ -823,7 +957,9 @@
 		const pointerSize = Math.max(15, actualSize * 0.07);
 
 		// Match the theme accent rather than the slice underneath
-		const pointerColor = deathMode ? '#8B0000' : avengersMode ? '#b91c1c' : darkMode ? '#818cf8' : '#4f46e5';
+		const pointerColor = headacheMode
+			? `hsl(${Math.floor(performance.now() / 4) % 360} 100% 50%)`
+			: deathMode ? '#8B0000' : avengersMode ? '#b91c1c' : darkMode ? '#818cf8' : '#4f46e5';
 
 		ctx.save();
 		ctx.translate(actualSize - 10, center);
@@ -852,6 +988,28 @@
 		ctx.stroke();
 
 		ctx.restore();
+
+		if (headacheMode) {
+			// Three decoy pointers circling the rim; only the real one counts
+			for (let k = 1; k <= 3; k++) {
+				const angle = (performance.now() / (500 + k * 170)) * (k % 2 ? 1 : -1) + k * 2.1;
+				ctx.save();
+				ctx.translate(center, center);
+				ctx.rotate(angle);
+				ctx.translate(center - 10, 0);
+				ctx.beginPath();
+				ctx.moveTo(0, -pointerSize);
+				ctx.lineTo(-pointerSize * 2, 0);
+				ctx.lineTo(0, pointerSize);
+				ctx.closePath();
+				ctx.fillStyle = `hsl(${(Math.floor(performance.now() / 3) + k * 120) % 360} 100% 50% / 0.85)`;
+				ctx.fill();
+				ctx.strokeStyle = '#000';
+				ctx.lineWidth = Math.max(1, actualSize * 0.003);
+				ctx.stroke();
+				ctx.restore();
+			}
+		}
 	}
 
 	function spin() {
@@ -865,11 +1023,21 @@
 
 		const spins = 4 + secureRandom() * 3;
 		const extraAngle = secureRandom() * 2 * Math.PI;
-		const targetRotation = currentRotation + spins * 2 * Math.PI + extraAngle;
+		const targetRotation = currentRotation + spinDirection * (spins * 2 * Math.PI + extraAngle);
 		// Fast mode spins 3x faster
 		const duration = fastMode ? (1500 + secureRandom() * 500) : (5000 + secureRandom() * 2000);
 		const startTime = performance.now();
 		const startRotation = currentRotation;
+
+		// Headache mode: tear around the viewport while spinning
+		let lastBounce = startTime;
+		bouncing = headacheMode;
+		if (headacheMode) {
+			const heading = secureRandom() * 2 * Math.PI;
+			driftVx = Math.cos(heading);
+			driftVy = Math.sin(heading);
+			setDriftSpeed(900 + secureRandom() * 600);
+		}
 
 		function easeOutCubic(t: number): number {
 			return 1 - Math.pow(1 - t, 3);
@@ -881,6 +1049,11 @@
 			const easedProgress = easeOutCubic(progress);
 
 			currentRotation = startRotation + (targetRotation - startRotation) * easedProgress;
+
+			if (bouncing) {
+				stepDrift((currentTime - lastBounce) / 1000);
+				lastBounce = currentTime;
+			}
 
 			// Play tick sound when passing a segment
 			const sliceAngle = (2 * Math.PI) / active.length;
@@ -905,6 +1078,14 @@
 			} else {
 				isSpinning = false;
 				lastTickIndex = -1; // Reset for next spin
+				if (headacheMode) {
+					// Keep wandering, just slower
+					setDriftSpeed(IDLE_DRIFT_SPEED);
+				} else {
+					bouncing = false;
+					bounceX = 0;
+					bounceY = 0;
+				}
 				const winningIndex = Math.floor(angleAtPointer / sliceAngle) % active.length;
 				const winner = active[winningIndex];
 				playSelectionSound();
@@ -1028,7 +1209,11 @@
 	});
 </script>
 
-<div class="flex flex-col items-center relative">
+<div
+	class="flex flex-col items-center relative"
+	class:settle={!bouncing}
+	style="transform: translate({bounceX}px, {bounceY}px)"
+>
 	<canvas
 		bind:this={canvas}
 		onclick={handleCanvasClick}
@@ -1039,3 +1224,10 @@
 		class="cursor-pointer transition-transform hover:scale-[1.02]"
 	></canvas>
 </div>
+
+<style>
+	/* Ease back to the centre once a bouncing spin ends */
+	.settle {
+		transition: transform 0.6s ease;
+	}
+</style>

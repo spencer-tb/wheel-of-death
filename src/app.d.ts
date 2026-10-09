@@ -9,6 +9,7 @@ declare global {
 		interface Platform {
 			env: {
 				WHEELS: KVNamespace;
+				GITHUB_TOKEN?: string;
 			};
 			context: {
 				waitUntil(promise: Promise<unknown>): void;

@@ -940,7 +940,7 @@
 				class="hover:opacity-70"
 			>🚫 Don't click me</a>
 			<span class="footer-bullet">•</span>
-			<span>🏷️ v0.3.0</span>
+			<span>🏷️ v0.4.0</span>
 		</div>
 	</div>
 </footer>

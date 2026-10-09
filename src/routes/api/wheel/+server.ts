@@ -2,6 +2,7 @@ import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import type { WheelConfig, Participant } from '$lib/types';
 import { generateId } from '$lib/utils';
+import { isValidParticipantImage } from '$lib/avatar';
 
 const TTL_SECONDS = 60 * 60 * 24 * 60; // 60 days
 const MAX_PARTICIPANTS = 50;
@@ -22,7 +23,8 @@ function sanitizeParticipant(p: unknown): Participant | null {
 		id: typeof obj.id === 'string' ? obj.id.slice(0, 20) : generateId(8),
 		name,
 		active: typeof obj.active === 'boolean' ? obj.active : true,
-		color: typeof obj.color === 'string' ? obj.color.slice(0, 20) : undefined
+		color: typeof obj.color === 'string' ? obj.color.slice(0, 20) : undefined,
+		image: isValidParticipantImage(obj.image) ? obj.image : undefined
 	};
 }
 
@@ -67,6 +69,8 @@ export const POST: RequestHandler = async ({ request, platform }) => {
 	const darkMode = typeof data.darkMode === 'boolean' ? data.darkMode : false;
 	const fastMode = typeof data.fastMode === 'boolean' ? data.fastMode : false;
 	const soundEnabled = typeof data.soundEnabled === 'boolean' ? data.soundEnabled : true;
+	const idleSpinEnabled = typeof data.idleSpinEnabled === 'boolean' ? data.idleSpinEnabled : true;
+	const avengersMode = typeof data.avengersMode === 'boolean' ? data.avengersMode : false;
 
 	// Validate color scheme
 	const colorScheme = typeof data.colorScheme === 'string' &&
@@ -84,6 +88,8 @@ export const POST: RequestHandler = async ({ request, platform }) => {
 		darkMode,
 		fastMode,
 		soundEnabled,
+		idleSpinEnabled,
+		avengersMode,
 		colorScheme,
 		createdAt: typeof data.createdAt === 'number' && data.id ? data.createdAt : now,
 		lastAccessedAt: now

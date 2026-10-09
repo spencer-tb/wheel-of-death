@@ -15,9 +15,10 @@
 		soundEnabled?: boolean;
 		colorScheme?: 'default' | 'rainbow' | 'pastel' | 'ocean' | 'sunset';
 		idleSpinEnabled?: boolean;
+		avengersMode?: boolean;
 	}
 
-	let { participants, onSpinComplete, onSpinStart, size = 400, onHover, darkMode = true, deathMode = false, fastMode = false, soundEnabled = true, colorScheme = 'default', idleSpinEnabled = true }: Props = $props();
+	let { participants, onSpinComplete, onSpinStart, size = 400, onHover, darkMode = true, deathMode = false, fastMode = false, soundEnabled = true, colorScheme = 'default', idleSpinEnabled = true, avengersMode = false }: Props = $props();
 
 	let canvas: HTMLCanvasElement;
 	let isSpinning = $state(false);
@@ -28,6 +29,29 @@
 	let isHovering = $state(false);
 	let audioContext: AudioContext | null = null;
 	let audioUnlocked = false;
+
+	// Decoded participant pictures, keyed by their data URL
+	const avatarCache = new Map<string, HTMLImageElement>();
+
+	function getAvatar(src: string): HTMLImageElement | null {
+		let img = avatarCache.get(src);
+		if (!img) {
+			img = new Image();
+			img.onload = () => redraw();
+			img.src = src;
+			avatarCache.set(src, img);
+		}
+		return img.complete && img.naturalWidth > 0 ? img : null;
+	}
+
+	function redraw() {
+		const ctx = canvas?.getContext('2d');
+		if (!ctx) return;
+		ctx.save();
+		ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+		drawWheel(ctx, currentRotation);
+		ctx.restore();
+	}
 
 	// Initialize/resume audio context on user interaction (required for mobile/iOS)
 	function initAudio() {
@@ -651,27 +675,41 @@
 			const endAngle = startAngle + sliceAngle;
 			const midAngle = startAngle + sliceAngle / 2;
 
-			// Draw slice with gradient
-			const gradient = ctx.createRadialGradient(0, 0, 0, 0, 0, radius);
-			const baseColor = participant.color || getSliceColor(i, darkMode, colorScheme, deathMode);
-			if (deathMode) {
-				gradient.addColorStop(0, '#1a1a2e');
-				gradient.addColorStop(0.3, baseColor);
-				gradient.addColorStop(1, baseColor);
+			const traceSlice = () => {
+				ctx.beginPath();
+				ctx.moveTo(0, 0);
+				ctx.arc(0, 0, radius, startAngle, endAngle);
+				ctx.closePath();
+			};
+
+			// A picture replaces the slice colour once it has decoded
+			const picture = participant.image ? getAvatar(participant.image) : null;
+			if (picture) {
+				traceSlice();
+				ctx.save();
+				ctx.clip();
+				drawSlicePicture(ctx, picture, midAngle, sliceAngle, radius);
+				ctx.restore();
 			} else {
-				gradient.addColorStop(0, '#ffffff');
-				gradient.addColorStop(0.2, baseColor);
-				gradient.addColorStop(1, baseColor);
+				// Draw slice with gradient
+				const gradient = ctx.createRadialGradient(0, 0, 0, 0, 0, radius);
+				const baseColor = participant.color || getSliceColor(i, darkMode, colorScheme, deathMode);
+				if (deathMode) {
+					gradient.addColorStop(0, '#1a1a2e');
+					gradient.addColorStop(0.3, baseColor);
+					gradient.addColorStop(1, baseColor);
+				} else {
+					gradient.addColorStop(0, '#ffffff');
+					gradient.addColorStop(0.2, baseColor);
+					gradient.addColorStop(1, baseColor);
+				}
+				traceSlice();
+				ctx.fillStyle = gradient;
+				ctx.fill();
 			}
 
-			ctx.beginPath();
-			ctx.moveTo(0, 0);
-			ctx.arc(0, 0, radius, startAngle, endAngle);
-			ctx.closePath();
-			ctx.fillStyle = gradient;
-			ctx.fill();
-
 			// Slice border
+			traceSlice();
 			ctx.strokeStyle = deathMode ? 'rgba(139, 0, 0, 0.5)' : darkMode ? 'rgba(100, 116, 139, 0.4)' : 'rgba(255, 255, 255, 0.3)';
 			ctx.lineWidth = 2;
 			ctx.stroke();
@@ -696,6 +734,13 @@
 
 			// Position text in the middle of the slice
 			const textRadius = radius * 0.65;
+			if (picture) {
+				// Outline keeps the name legible over a busy photo
+				ctx.lineJoin = 'round';
+				ctx.lineWidth = Math.max(2, fontSize * 0.12);
+				ctx.strokeStyle = 'rgba(0, 0, 0, 0.55)';
+				ctx.strokeText(text, textRadius, 0);
+			}
 			ctx.fillText(text, textRadius, 0);
 			ctx.restore();
 		});
@@ -730,6 +775,15 @@
 			ctx.textAlign = 'center';
 			ctx.textBaseline = 'middle';
 			ctx.fillText('💀', center, center);
+		} else if (avengersMode) {
+			// Red hub with a gold ring
+			ctx.beginPath();
+			ctx.arc(center, center, centerCircleRadius, 0, 2 * Math.PI);
+			ctx.fillStyle = '#b91c1c';
+			ctx.fill();
+			ctx.strokeStyle = '#f59e0b';
+			ctx.lineWidth = Math.max(2, actualSize * 0.006);
+			ctx.stroke();
 		} else {
 			// Simple center for light/dark mode
 			ctx.beginPath();
@@ -742,23 +796,34 @@
 		}
 
 		// Draw pointer (scythe/dagger shape)
-		drawPointer(ctx, rotation);
+		drawPointer(ctx);
 	}
 
-	function drawPointer(ctx: CanvasRenderingContext2D, rotation: number) {
-		const active = getActiveParticipants();
+	// Paint a participant's picture across their slice. The context is
+	// centred on the wheel, rotated with it, and clipped to the wedge.
+	function drawSlicePicture(ctx: CanvasRenderingContext2D, image: HTMLImageElement, midAngle: number, sliceAngle: number, radius: number) {
+		const half = sliceAngle / 2;
+		// Bounding box of the wedge in a frame whose x axis runs along the
+		// middle of the slice; the picture is scaled to cover it
+		const xMin = half < Math.PI / 2 ? 0 : radius * Math.cos(half);
+		const yMax = radius * Math.sin(Math.min(half, Math.PI / 2));
+		const side = 1.1 * Math.max(radius - xMin, 2 * yMax);
+
+		ctx.save();
+		ctx.rotate(midAngle);
+		ctx.translate((radius + xMin) / 2, 0);
+		// Point the top of the picture at the rim
+		ctx.rotate(Math.PI / 2);
+		ctx.drawImage(image, -side / 2, -side / 2, side, side);
+		ctx.restore();
+	}
+
+	function drawPointer(ctx: CanvasRenderingContext2D) {
 		const center = actualSize / 2;
 		const pointerSize = Math.max(15, actualSize * 0.07);
 
-		let pointerColor = deathMode ? '#8B0000' : '#10b981';
-		if (active.length > 0) {
-			const sliceAngle = (2 * Math.PI) / active.length;
-			const normalizedRotation = ((rotation % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
-			const angleAtPointer = (Math.PI / 2 - normalizedRotation + 2 * Math.PI) % (2 * Math.PI);
-			const colorIndex = Math.floor(angleAtPointer / sliceAngle) % active.length;
-			const currentParticipant = active[colorIndex];
-			pointerColor = currentParticipant?.color || getSliceColor(colorIndex, darkMode, colorScheme, deathMode);
-		}
+		// Match the theme accent rather than the slice underneath
+		const pointerColor = deathMode ? '#8B0000' : avengersMode ? '#b91c1c' : darkMode ? '#818cf8' : '#4f46e5';
 
 		ctx.save();
 		ctx.translate(actualSize - 10, center);
@@ -944,7 +1009,11 @@
 	});
 
 	$effect(() => {
-		participants;
+		// Drop cached pictures that no participant uses any more
+		const inUse = new Set(participants.map((p) => p.image));
+		for (const src of avatarCache.keys()) {
+			if (!inUse.has(src)) avatarCache.delete(src);
+		}
 	});
 
 	$effect(() => {

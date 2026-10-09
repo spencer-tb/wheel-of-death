@@ -6,6 +6,7 @@
 	import ParticipantList from '$lib/components/ParticipantList.svelte';
 	import type { Participant } from '$lib/types';
 	import { generateId, getRandomPhrase, getRandomQuestion, secureRandom } from '$lib/utils';
+	import { AVENGERS_ROSTER, getAvengersPhrase, getAvengersTagline } from '$lib/avengers';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
@@ -39,7 +40,8 @@
 		'Ready, set, spin!'
 	];
 
-	function getTagline(deathMode: boolean): string {
+	function getTagline(deathMode: boolean, avengersMode: boolean = false): string {
+		if (avengersMode) return getAvengersTagline();
 		const list = deathMode ? DEATH_TAGLINES : FUN_TAGLINES;
 		return list[Math.floor(secureRandom() * list.length)];
 	}
@@ -63,11 +65,30 @@
 	let wheelSize = $state(750);
 	let deathMode = $state(data.config?.darkMode ?? false);
 	let darkTheme = $state(false);
+	let avengersMode = $state(data.config?.avengersMode ?? false);
+
+	// The theme plays every time the team assembles. Plays may overlap, but
+	// never more than MAX_THEME_PLAYS at once.
+	const AVENGERS_THEME = '/avengers/theme.m4a';
+	const MAX_THEME_PLAYS = 3;
+	let themePlayers: HTMLAudioElement[] = [];
+
+	function playAvengersTheme() {
+		if (!soundEnabled) return;
+		themePlayers = themePlayers.filter((audio) => !audio.ended && !audio.paused);
+		if (themePlayers.length >= MAX_THEME_PLAYS) return;
+		const audio = new Audio(AVENGERS_THEME);
+		audio.volume = 0.6;
+		audio.play().catch(() => {
+			// Browsers may block audio until the page has been interacted with
+		});
+		themePlayers.push(audio);
+	}
 	let fastMode = $state(data.config?.fastMode ?? false);
 	let soundEnabled = $state(data.config?.soundEnabled ?? true);
 	let idleSpinEnabled = $state(data.config?.idleSpinEnabled ?? true);
 	let colorScheme = $state<'default' | 'rainbow' | 'pastel' | 'ocean' | 'sunset'>(data.config?.colorScheme || 'default');
-	let currentTagline = $state(getTagline(data.config?.darkMode ?? false));
+	let currentTagline = $state(getTagline(data.config?.darkMode ?? false, data.config?.avengersMode ?? false));
 	let showToast = $state(false);
 	let toastMessage = $state('');
 	let icebreakerEnabled = $state(false);
@@ -157,6 +178,7 @@
 					fastMode,
 					soundEnabled,
 					idleSpinEnabled,
+					avengersMode,
 					colorScheme,
 					createdAt: data.config?.createdAt
 				})
@@ -239,7 +261,7 @@
 
 	function handleSpinComplete(participant: Participant) {
 		selectedParticipant = participant;
-		winnerPhrase = getRandomPhrase(deathMode);
+		winnerPhrase = avengersMode ? getAvengersPhrase(participant.image) : getRandomPhrase(deathMode);
 		if (icebreakerEnabled) {
 			currentQuestion = getRandomQuestion(deathMode);
 		}
@@ -306,15 +328,31 @@
 
 	function toggleDeathMode() {
 		deathMode = !deathMode;
-		currentTagline = getTagline(deathMode);
+		currentTagline = getTagline(deathMode, avengersMode);
 
 		// Clear custom colors when switching modes
 		participants = participants.map(p => ({ ...p, color: undefined }));
 
-		// Only swap names if user hasn't edited them
-		if (!namesEdited) {
+		// Only swap names if user hasn't edited them; the team stays assembled
+		if (!namesEdited && !avengersMode) {
 			participants = createParticipants(deathMode ? DEATH_NAMES : NORMAL_NAMES);
 		}
+	}
+
+	// Like death mode, this only decides who is on the wheel
+	function toggleAvengersMode() {
+		avengersMode = !avengersMode;
+		participants = avengersMode
+			? AVENGERS_ROSTER.map((member) => ({
+					id: generateId(),
+					name: member.name,
+					active: true,
+					image: member.image
+				}))
+			: createParticipants(deathMode ? DEATH_NAMES : NORMAL_NAMES);
+		namesEdited = false;
+		currentTagline = getTagline(deathMode, avengersMode);
+		if (avengersMode) playAvengersTheme();
 	}
 
 	function resetAll() {
@@ -411,14 +449,15 @@
 		darkMode={isDark}
 		{deathMode}
 		onUpdate={handleParticipantsUpdate}
+		onNotify={toast}
 	/>
 
 	<!-- Settings Section -->
 	<div class="mt-5 pt-5 border-t" class:border-gray-200={!isDark} class:border-slate-700={isDark}>
 		<h3 class="text-lg font-semibold mb-4" class:text-gray-700={!isDark} class:text-gray-300={isDark}>Settings</h3>
 
-		<!-- Death Mode Toggle -->
-		<div class="flex items-center justify-between mb-3">
+		<!-- Mode toggles for phones; desktop has them as buttons top right -->
+		<div class="flex items-center justify-between mb-3 min-[900px]:hidden">
 			<span class="text-sm" class:text-gray-600={!isDark} class:text-gray-400={isDark}>Death Mode</span>
 			<button
 				onclick={toggleDeathMode}
@@ -429,6 +468,21 @@
 				<span
 					class="absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform"
 					class:translate-x-5={deathMode}
+				></span>
+			</button>
+		</div>
+
+		<div class="flex items-center justify-between mb-3 min-[900px]:hidden">
+			<span class="text-sm" class:text-gray-600={!isDark} class:text-gray-400={isDark}>Avengers Mode</span>
+			<button
+				onclick={toggleAvengersMode}
+				class="relative w-11 h-6 rounded-full transition-colors"
+				class:bg-red-600={avengersMode}
+				class:bg-gray-300={!avengersMode}
+			>
+				<span
+					class="absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform"
+					class:translate-x-5={avengersMode}
 				></span>
 			</button>
 		</div>
@@ -613,6 +667,38 @@
 >
 	<!-- Toggle Buttons - Fixed position -->
 	<div class="fixed top-4 right-4 z-50 flex gap-2 max-[900px]:hidden">
+		<!-- Death Mode Toggle -->
+		<button
+			onclick={toggleDeathMode}
+			class="p-2 rounded-lg shadow-md transition-colors"
+			class:bg-white={!isDark && !deathMode}
+			class:hover:bg-gray-50={!isDark && !deathMode}
+			class:bg-slate-700={isDark && !deathMode}
+			class:hover:bg-slate-600={isDark && !deathMode}
+			class:bg-red-900={deathMode}
+			class:hover:bg-red-800={deathMode}
+			title={deathMode ? 'Leave Death Mode' : 'Enter Death Mode'}
+		>
+			<span class="block w-5 h-5 text-center text-base leading-5 transition-all" class:grayscale={!deathMode} class:opacity-60={!deathMode}>💀</span>
+		</button>
+		<!-- Avengers Mode Toggle -->
+		<button
+			onclick={toggleAvengersMode}
+			class="p-2 rounded-lg shadow-md transition-colors"
+			class:bg-white={!isDark && !avengersMode}
+			class:hover:bg-gray-50={!isDark && !avengersMode}
+			class:bg-slate-700={isDark && !avengersMode}
+			class:hover:bg-slate-600={isDark && !avengersMode}
+			class:bg-red-700={avengersMode}
+			class:hover:bg-red-600={avengersMode}
+			title={avengersMode ? 'Disassemble' : 'Avengers, assemble!'}
+		>
+			<svg class="w-5 h-5" viewBox="0 0 24 24" fill="currentColor" class:text-red-600={!avengersMode} class:text-white={avengersMode}>
+				<path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm0 2.2a7.8 7.8 0 1 1 0 15.6 7.8 7.8 0 0 1 0-15.6z" />
+				<path fill-rule="evenodd" d="M11 5.5h2.2l4.4 11.3h-2.3l-1-2.7H9.7l-1 2.7H6.4L11 5.5zm1 3L10.5 12.2h3L12 8.5z" />
+				<path d="M15.8 16.4l5.8 2.2-3.6 3.8-2.2-6z" />
+			</svg>
+		</button>
 		<!-- Dark Theme Toggle -->
 		<button
 			onclick={toggleDarkTheme}
@@ -675,6 +761,7 @@
 				{fastMode}
 				{soundEnabled}
 				{idleSpinEnabled}
+				{avengersMode}
 				{colorScheme}
 			/>
 
@@ -722,6 +809,16 @@
 					class:text-gray-400={isDark}
 					style={deathMode ? "font-family: 'Creepster', cursive;" : ""}
 				>{winnerPhrase}</p>
+				{#if selectedParticipant.image}
+					<img
+						src={selectedParticipant.image}
+						alt=""
+						class="w-28 h-28 rounded-full object-cover mx-auto mb-4 border-4 shadow-lg"
+						class:border-indigo-200={!isDark}
+						class:border-slate-600={isDark && !deathMode}
+						class:border-red-800={deathMode}
+					/>
+				{/if}
 				<p
 					class="text-5xl font-bold"
 					class:mb-6={!icebreakerEnabled}

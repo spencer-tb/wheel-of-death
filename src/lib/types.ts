@@ -3,6 +3,7 @@ export interface Participant {
 	name: string;
 	active: boolean; // false = removed after being picked
 	color?: string; // custom color for wheel slice
+	image?: string; // small JPEG data URL drawn on the slice
 }
 
 export interface WheelConfig {
@@ -14,6 +15,7 @@ export interface WheelConfig {
 	fastMode: boolean;
 	soundEnabled: boolean;
 	idleSpinEnabled: boolean;
+	avengersMode: boolean;
 	colorScheme: 'default' | 'rainbow' | 'pastel' | 'ocean' | 'sunset';
 	createdAt: number;
 	lastAccessedAt: number;

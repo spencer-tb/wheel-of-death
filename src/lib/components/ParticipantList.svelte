@@ -1,15 +1,17 @@
 <script lang="ts">
 	import type { Participant } from '$lib/types';
 	import { generateId } from '$lib/utils';
+	import { fileToAvatarDataUrl } from '$lib/avatar';
 
 	interface Props {
 		participants: Participant[];
 		onUpdate: (participants: Participant[]) => void;
 		darkMode?: boolean;
 		deathMode?: boolean;
+		onNotify?: (message: string) => void;
 	}
 
-	let { participants, onUpdate, darkMode = false, deathMode = false }: Props = $props();
+	let { participants, onUpdate, darkMode = false, deathMode = false, onNotify }: Props = $props();
 
 	let newName = $state('');
 	let isExpanded = $state(true);
@@ -81,6 +83,36 @@
 		onUpdate(
 			participants.map((p) => (p.id === id ? { ...p, color } : p))
 		);
+	}
+
+	// One hidden file input serves every row; imageTargetId says whose
+	// picture the next chosen file belongs to
+	let fileInput: HTMLInputElement;
+	let imageTargetId: string | null = null;
+
+	function pickImage(id: string) {
+		imageTargetId = id;
+		fileInput.click();
+	}
+
+	function updateImage(id: string, image: string | undefined) {
+		onUpdate(
+			participants.map((p) => (p.id === id ? { ...p, image } : p))
+		);
+	}
+
+	async function handleFileChange(e: Event) {
+		const input = e.currentTarget as HTMLInputElement;
+		const file = input.files?.[0];
+		const id = imageTargetId;
+		input.value = '';
+		imageTargetId = null;
+		if (!file || !id) return;
+		try {
+			updateImage(id, await fileToAvatarDataUrl(file));
+		} catch (err) {
+			onNotify?.(err instanceof Error ? err.message : 'Could not use that image');
+		}
 	}
 
 	const LIGHT_COLORS = [
@@ -178,13 +210,50 @@
 								</svg>
 							{/if}
 						</button>
-						<input
-							type="color"
-							value={participant.color || presetColors[participants.indexOf(participant) % presetColors.length]}
-							onchange={(e) => updateColor(participant.id, e.currentTarget.value)}
-							class="w-5 h-5 rounded cursor-pointer border-0 p-0 flex-shrink-0"
-							title="Change color"
-						/>
+						{#if participant.image}
+							<!-- The picture stands in for the colour swatch -->
+							<span class="relative flex-shrink-0 group">
+								<button
+									onclick={() => pickImage(participant.id)}
+									class="w-5 h-5 rounded overflow-hidden block"
+									title="Change image"
+								>
+									<img src={participant.image} alt="" class="w-full h-full object-cover" />
+								</button>
+								<button
+									onclick={() => updateImage(participant.id, undefined)}
+									class="absolute -top-1 -right-1 w-3.5 h-3.5 rounded-full bg-gray-700 text-white text-[9px] leading-none flex items-center justify-center opacity-0 group-hover:opacity-100 pointer-coarse:opacity-100 transition-opacity"
+									title="Remove image"
+								>&times;</button>
+							</span>
+						{:else}
+							<input
+								type="color"
+								value={participant.color || presetColors[participants.indexOf(participant) % presetColors.length]}
+								onchange={(e) => updateColor(participant.id, e.currentTarget.value)}
+								class="w-5 h-5 rounded cursor-pointer border-0 p-0 flex-shrink-0"
+								title="Change color"
+							/>
+							<button
+								onclick={() => pickImage(participant.id)}
+								class="w-5 h-5 rounded flex-shrink-0 flex items-center justify-center transition-colors"
+								class:bg-gray-200={!darkMode}
+								class:hover:bg-gray-300={!darkMode}
+								class:text-gray-500={!darkMode}
+								class:bg-slate-600={darkMode}
+								class:hover:bg-slate-500={darkMode}
+								class:text-gray-300={darkMode}
+								title="Add image"
+							>
+								<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+									<path
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 001.5-1.5V6a1.5 1.5 0 00-1.5-1.5H3.75A1.5 1.5 0 002.25 6v12a1.5 1.5 0 001.5 1.5zm10.5-11.25h.008v.008h-.008V8.25z"
+									/>
+								</svg>
+							</button>
+						{/if}
 						{#if editingId === participant.id}
 						<input
 							type="text"
@@ -234,4 +303,12 @@
 			<p class="text-center py-3 text-sm" class:text-gray-400={!darkMode} class:text-gray-500={darkMode}>No participants yet</p>
 		{/if}
 	{/if}
+
+	<input
+		bind:this={fileInput}
+		type="file"
+		accept="image/*"
+		class="hidden"
+		onchange={handleFileChange}
+	/>
 </div>

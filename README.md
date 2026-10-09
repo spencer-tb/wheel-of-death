@@ -14,6 +14,8 @@ A fun randomizer wheel app to pick participants! Spin the wheel to decide who go
 - **Persistent Wheels** - Save and share wheels via unique URLs
 - **Mobile Support** - Touch/swipe to spin, responsive design
 - **Custom Colors** - Set individual colors for each participant
+- **Pictures** - Give a participant a photo and it fills their slice instead of a colour
+- **Avengers Mode** - One click assembles the team, pictures and all
 
 ## Tech Stack
 

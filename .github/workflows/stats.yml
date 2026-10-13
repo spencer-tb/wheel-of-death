@@ -8,6 +8,10 @@ on:
     # is UTC only and may start a few minutes late under load.
     - cron: '17 */6 * * *'
     - cron: '0 0 * * *'
+    # Fresh before the 14:00 UK calls on Tuesday and Thursday. Cron cannot
+    # follow UK daylight saving, so run at 13:30 in both BST and GMT.
+    - cron: '30 12 * * 2,4'
+    - cron: '30 13 * * 2,4'
   workflow_dispatch:
 
 concurrency:

@@ -53,8 +53,9 @@ export interface MergedPullRequest {
 	mergedAt: string;
 }
 
-export interface WeekPoint {
-	start: string; // ISO timestamp of the week's start
+// One bar group on the pull request chart, a week or a calendar month
+export interface ChartPoint {
+	start: string; // ISO timestamp of the period's start
 	opened: number;
 	merged: number;
 }
@@ -73,7 +74,8 @@ export interface StatsView {
 		mergedPRs: number;
 		closedPRs: number;
 	};
-	weeks: WeekPoint[];
+	weeks: ChartPoint[];
+	months: ChartPoint[]; // calendar months in UTC, the last one still running
 	reviewers: ReviewerStat[];
 	authors: AuthorStat[];
 	recentlyMerged: MergedPullRequest[];
@@ -132,19 +134,28 @@ export interface ReleaseLink {
 	date: string; // YYYY-MM-DD
 }
 
+// A "Test Release Tracker" issue: its target tag and "### Status" checklist
+export interface ReleaseTracker {
+	name: string; // target release tag, e.g. tests-bogota-devnet@v1.1.0
+	issue: number;
+	url: string | null; // the published release, once there is one
+	items: ReleaseItem[];
+}
+
 export interface DevnetPlanRow {
 	devnet: string;
 	target: string;
 	scope: string;
+	release: Pick<ReleaseTracker, 'name' | 'issue' | 'url'> | null; // the devnet's newest test release tracker
 }
 
-// Where the fork is: activations from the meta EIP, the test release
-// tracker's top-level checklist, and the devnet plan
+// Where the fork is: activations from the meta EIP, the open test release
+// trackers' checklists, and the devnet plan
 export interface ForkStage {
 	label: string;
 	metaStatus: string;
 	activations: ForkActivation[];
-	release: { name: string; issue: number; items: ReleaseItem[] } | null;
+	trackers: ReleaseTracker[];
 	releases: ReleaseLink[]; // latest published releases relevant to the fork
 	devnets: DevnetPlanRow[];
 }
@@ -177,6 +188,7 @@ export interface RepoStats {
 	since: string; // start of the leaderboard window, ISO timestamp
 	windowDays: number;
 	chartWeeks: number;
+	chartMonths: number;
 	totals: {
 		stars: number;
 		forks: number;

@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import type { EipRow, EipStatus, ForkView, RepoStats, StatsView, WeekPoint } from '$lib/types';
+	import type { ChartPoint, EipStatus, ForkView, ReleaseItem, RepoStats, StatsView } from '$lib/types';
 
 	interface Props {
 		darkMode?: boolean;
@@ -14,13 +14,17 @@
 	let stats = $state<RepoStats | null>(null);
 	let status = $state<'idle' | 'loading' | 'ready' | 'unavailable'>('idle');
 	let tab = $state('eels');
-	let hoveredWeek = $state<number | null>(null);
+	let period = $state<'week' | 'month'>('week');
+	let hovered = $state<number | null>(null);
 
 	// The EELS tab is activity; fork tabs are EIP trackers
 	const tabs = $derived(stats ? [{ key: stats.eels.key, label: stats.eels.label }, ...stats.forks.map((f) => ({ key: f.key, label: f.position ? `${f.position} · ${f.label}` : f.label }))] : []);
 	const fork = $derived<ForkView | null>(stats ? (stats.forks.find((f) => f.key === tab) ?? null) : null);
 	const view = $derived<StatsView | null>(stats && !fork ? stats.eels : null);
 	const description = $derived(fork?.description ?? (view ? `${view.description} in ${stats?.repo}` : ''));
+	// Stats published before the monthly chart have no months: weekly only
+	const hasMonths = $derived(!!view?.months?.length);
+	const points = $derived<ChartPoint[]>(view ? (period === 'month' && hasMonths ? view.months : view.weeks) : []);
 
 	const STATUS_STYLE: Record<EipStatus, { label: string; light: string; dark: string }> = {
 		done: { label: 'Checked off', light: 'bg-emerald-100 text-emerald-800', dark: 'bg-emerald-900 text-emerald-200' },
@@ -55,11 +59,21 @@
 
 	function selectTab(key: string) {
 		tab = key;
-		hoveredWeek = null;
+		hovered = null;
 		try {
 			localStorage.setItem('statsTab', key);
 		} catch {
 			// Private mode or blocked storage: the tab just does not stick
+		}
+	}
+
+	function selectPeriod(p: 'week' | 'month') {
+		period = p;
+		hovered = null;
+		try {
+			localStorage.setItem('statsPeriod', p);
+		} catch {
+			// ignore
 		}
 	}
 
@@ -68,6 +82,7 @@
 		try {
 			const saved = localStorage.getItem('statsTab');
 			if (saved) tab = saved;
+			if (localStorage.getItem('statsPeriod') === 'month') period = 'month';
 		} catch {
 			// ignore
 		}
@@ -85,16 +100,10 @@
 		return () => observer.disconnect();
 	});
 
-	const MEDALS = ['🥇', '🥈', '🥉'];
-
 	// Chart colours, validated for each surface: merged is indigo, opened amber
 	const colors = $derived(darkMode
 		? { opened: '#d97706', merged: '#6366f1', grid: '#334155', ink: '#cbd5e1', muted: '#94a3b8' }
 		: { opened: '#f59e0b', merged: '#4f46e5', grid: '#e2e8f0', ink: '#334155', muted: '#94a3b8' });
-
-	function smallAvatar(url: string): string {
-		return url + (url.includes('?') ? '&' : '?') + 's=64';
-	}
 
 	function ago(iso: string): string {
 		const minutes = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
@@ -106,6 +115,17 @@
 
 	function weekLabel(iso: string): string {
 		return new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+	}
+
+	// Months are calendar months in UTC
+	function monthLabel(iso: string, long = false): string {
+		return new Date(iso).toLocaleDateString(undefined, long ? { month: 'long', year: 'numeric', timeZone: 'UTC' } : { month: 'short', timeZone: 'UTC' });
+	}
+
+	function pointLabel(i: number): string {
+		const p = points[i];
+		if (period === 'week') return `Week of ${weekLabel(p.start)}`;
+		return `${monthLabel(p.start, true)}${i === points.length - 1 ? ' so far' : ''}`;
 	}
 
 	const tiles = $derived(stats && view ? (view.key === 'eels' ? [
@@ -131,8 +151,8 @@
 	const plotW = chart.width - chart.left - chart.right;
 	const plotH = chart.height - chart.top - chart.bottom;
 
-	function yMax(weeks: WeekPoint[]): number {
-		return Math.max(1, ...weeks.map((w) => Math.max(w.opened, w.merged)));
+	function yMax(points: ChartPoint[]): number {
+		return Math.max(1, ...points.map((w) => Math.max(w.opened, w.merged)));
 	}
 
 	function ticks(max: number): number[] {
@@ -147,14 +167,6 @@
 		const bottom = chart.top + plotH;
 		if (h <= 0) return '';
 		return `M${x} ${bottom} V${y + r} Q${x} ${y} ${x + r} ${y} H${x + width - r} Q${x + width} ${y} ${x + width} ${y + r} V${bottom} Z`;
-	}
-
-	function sparkline(values: number[], w = 72, h = 20): string {
-		const max = Math.max(1, ...values);
-		const step = values.length > 1 ? w / (values.length - 1) : 0;
-		return values
-			.map((v, i) => `${(i * step).toFixed(1)},${(h - 2 - (v / max) * (h - 4)).toFixed(1)}`)
-			.join(' ');
 	}
 </script>
 
@@ -199,8 +211,7 @@
 
 		{#if fork}
 			{@const stage = fork.stage}
-			{@const release = stage?.release ?? null}
-			{@const releaseDone = release ? release.items.filter((i) => i.done).length : 0}
+			{@const trackers = stage?.trackers ?? []}
 			<!-- Fork stage -->
 			<div class="rounded-xl p-5 shadow-sm mb-6 grid grid-cols-1 @3xl:grid-cols-2 gap-6" class:bg-white={!darkMode} class:bg-slate-800={darkMode}>
 				<div>
@@ -235,20 +246,45 @@
 					{/if}
 				</div>
 				<div>
-					{#if release}
-						<div class="text-xs uppercase tracking-wide" class:text-gray-500={!darkMode} class:text-gray-400={darkMode}>
-							Test release · <a href="https://github.com/{stats.repo}/issues/{release.issue}" target="_blank" rel="noopener noreferrer" class="hover:underline">#{release.issue}</a>
-						</div>
-						{@const releaseLink = stage?.releases?.find((r) => r.tag === release.name) ?? null}
-						<div class="font-semibold font-mono" class:text-gray-800={!darkMode} class:text-white={darkMode}>
-							{#if releaseLink}<a href={releaseLink.url} target="_blank" rel="noopener noreferrer" class="hover:underline">{release.name}</a>{:else}{release.name}{/if}
-							<span class="text-xs font-sans font-normal" class:text-gray-500={!darkMode} class:text-gray-400={darkMode}>{releaseDone} of {release.items.length} done</span>
-						</div>
+					{#snippet checklist(items: ReleaseItem[])}
 						<ul class="mt-2 space-y-1 text-sm">
-							{#each release.items as item, i (i)}
+							{#each items as item, i (i)}
 								<li class="flex gap-2" class:opacity-50={item.done}>
 									<span aria-hidden="true">{item.done ? '✅' : '⬜'}</span>
 									<span class:line-through={item.done} class:text-gray-700={!darkMode} class:text-gray-200={darkMode}>{item.text}</span>
+								</li>
+							{/each}
+						</ul>
+					{/snippet}
+					{#if trackers.length === 1}
+						{@const release = trackers[0]}
+						<div class="text-xs uppercase tracking-wide" class:text-gray-500={!darkMode} class:text-gray-400={darkMode}>
+							Test release · <a href="https://github.com/{stats.repo}/issues/{release.issue}" target="_blank" rel="noopener noreferrer" class="hover:underline">#{release.issue}</a>
+						</div>
+						<div class="font-semibold font-mono" class:text-gray-800={!darkMode} class:text-white={darkMode}>
+							{#if release.url}<a href={release.url} target="_blank" rel="noopener noreferrer" class="hover:underline">{release.name}</a>{:else}{release.name}{/if}
+							<span class="text-xs font-sans font-normal" class:text-gray-500={!darkMode} class:text-gray-400={darkMode}>{release.items.filter((i) => i.done).length} of {release.items.length} done</span>
+						</div>
+						{@render checklist(release.items)}
+					{:else if trackers.length > 1}
+						<div class="text-xs uppercase tracking-wide" class:text-gray-500={!darkMode} class:text-gray-400={darkMode}>Test releases · {trackers.length} open trackers</div>
+						<ul class="mt-1 divide-y" class:divide-slate-100={!darkMode} class:divide-slate-700={darkMode} data-trackers>
+							{#each trackers as t (t.issue)}
+								{@const done = t.items.filter((i) => i.done).length}
+								<li>
+									<details class="py-2">
+										<summary class="cursor-pointer select-none text-sm">
+											<span class="font-semibold font-mono" class:text-gray-800={!darkMode} class:text-white={darkMode}>{#if t.url}<a href={t.url} target="_blank" rel="noopener noreferrer" class="hover:underline">{t.name}</a>{:else}{t.name}{/if}</span>
+											<a href="https://github.com/{stats.repo}/issues/{t.issue}" target="_blank" rel="noopener noreferrer" class="font-mono text-xs ml-1 hover:underline" class:text-indigo-600={!darkMode} class:text-indigo-400={darkMode}>#{t.issue}</a>
+											<span class="text-xs ml-1 tabular-nums whitespace-nowrap" class:text-gray-500={!darkMode} class:text-gray-400={darkMode} title="{done} of {t.items.length} status items checked">
+												{done} of {t.items.length} done
+												<span class="inline-block align-middle w-12 h-1.5 rounded-full ml-1" class:bg-slate-200={!darkMode} class:bg-slate-600={darkMode}>
+													<span class="block h-full rounded-full" class:bg-emerald-500={done === t.items.length} class:bg-indigo-500={done !== t.items.length} style="width: {Math.round((done / Math.max(1, t.items.length)) * 100)}%"></span>
+												</span>
+											</span>
+										</summary>
+										{@render checklist(t.items)}
+									</details>
 								</li>
 							{/each}
 						</ul>
@@ -261,14 +297,26 @@
 			{#if stage?.devnets?.length}
 				<div class="rounded-xl p-5 shadow-sm mb-6 overflow-x-auto" class:bg-white={!darkMode} class:bg-slate-800={darkMode}>
 					<h3 class="text-lg font-semibold mb-3" class:text-gray-800={!darkMode} class:text-white={darkMode}>🧪 Devnet plan <span class="text-xs font-normal" class:text-gray-400={!darkMode} class:text-gray-500={darkMode}>from tracker #{fork.trackerIssue}, internal and not yet agreed</span></h3>
-					<table class="w-full text-sm min-w-[520px]">
+					<table class="w-full text-sm min-w-[680px]" data-devnet-table>
 						<thead>
-							<tr class="text-left text-xs uppercase tracking-wide" class:text-gray-500={!darkMode} class:text-gray-400={darkMode}><th class="py-1 pr-3 font-medium">Devnet</th><th class="py-1 pr-3 font-medium">Target</th><th class="py-1 font-medium">Scope</th></tr>
+							<tr class="text-left text-xs uppercase tracking-wide" class:text-gray-500={!darkMode} class:text-gray-400={darkMode}><th class="py-1 pr-3 font-medium">Devnet</th><th class="py-1 pr-3 font-medium">Release</th><th class="py-1 pr-3 font-medium">Target</th><th class="py-1 font-medium">Scope</th></tr>
 						</thead>
 						<tbody>
 							{#each stage.devnets as d (d.devnet)}
 								<tr class="border-t" class:border-slate-100={!darkMode} class:border-slate-700={darkMode}>
 									<td class="py-1.5 pr-3 font-mono whitespace-nowrap" class:text-indigo-600={!darkMode} class:text-indigo-400={darkMode}>{d.devnet}</td>
+									<td class="py-1.5 pr-3 font-mono text-xs whitespace-nowrap">
+										{#if d.release}
+											{#if d.release.url}
+												<a href={d.release.url} target="_blank" rel="noopener noreferrer" class="hover:underline" class:text-gray-700={!darkMode} class:text-gray-200={darkMode} title="Published release">{d.release.name}</a>
+											{:else}
+												<span class:text-gray-700={!darkMode} class:text-gray-200={darkMode} title="Not released yet">{d.release.name}</span>
+											{/if}
+											<a href="https://github.com/{stats.repo}/issues/{d.release.issue}" target="_blank" rel="noopener noreferrer" class="ml-1 hover:underline" class:text-indigo-600={!darkMode} class:text-indigo-400={darkMode} title="Test release tracker">#{d.release.issue}</a>
+										{:else}
+											<span class:text-gray-400={!darkMode} class:text-gray-500={darkMode}>—</span>
+										{/if}
+									</td>
 									<td class="py-1.5 pr-3 whitespace-nowrap" class:text-gray-700={!darkMode} class:text-gray-200={darkMode}>{d.target}</td>
 									<td class="py-1.5" class:text-gray-600={!darkMode} class:text-gray-300={darkMode}>{d.scope}</td>
 								</tr>
@@ -404,9 +452,9 @@
 			</p>
 			{/if}
 		{:else if view}
-			{@const groupW = plotW / view.weeks.length}
+			{@const groupW = plotW / points.length}
 			{@const barW = Math.floor((groupW - 14) / 2)}
-			{@const max = yMax(view.weeks)}
+			{@const max = yMax(points)}
 
 			<!-- Overview tiles -->
 			<div class="grid grid-cols-2 @2xl:grid-cols-4 gap-3 mb-6">
@@ -423,43 +471,60 @@
 				{/each}
 			</div>
 
-			<!-- Weekly chart -->
+			<!-- Pull request chart, weekly or monthly -->
 			<div class="rounded-xl p-5 shadow-sm mb-6" class:bg-white={!darkMode} class:bg-slate-800={darkMode}>
 				<div class="flex flex-wrap items-center justify-between gap-2 mb-2">
-					<h3 class="text-lg font-semibold" class:text-gray-800={!darkMode} class:text-white={darkMode}>Pull requests per week <span class="text-xs font-normal" class:text-gray-400={!darkMode} class:text-gray-500={darkMode}>rolling {stats.chartWeeks} weeks</span></h3>
-					<div class="flex items-center gap-4 text-xs" class:text-gray-600={!darkMode} class:text-gray-300={darkMode}>
+					<h3 class="text-lg font-semibold" class:text-gray-800={!darkMode} class:text-white={darkMode}>Pull requests per {period} <span class="text-xs font-normal" class:text-gray-400={!darkMode} class:text-gray-500={darkMode}>{period === 'week' ? `rolling ${stats.chartWeeks} weeks` : `last ${stats.chartMonths} months`}</span></h3>
+					<div class="flex flex-wrap items-center gap-4 text-xs" class:text-gray-600={!darkMode} class:text-gray-300={darkMode}>
+						{#if hasMonths}
+							<div class="inline-flex rounded-lg p-0.5" class:bg-slate-100={!darkMode} class:bg-slate-700={darkMode} role="group" aria-label="Chart period" data-period-toggle>
+								{#each [{ key: 'week', label: 'Weekly' }, { key: 'month', label: 'Monthly' }] as const as p (p.key)}
+									{@const active = period === p.key}
+									<button
+										aria-pressed={active}
+										onclick={() => selectPeriod(p.key)}
+										class="px-2.5 py-0.5 rounded-md font-medium transition-colors"
+										class:bg-white={active && !darkMode}
+										class:shadow-sm={active}
+										class:text-gray-800={active && !darkMode}
+										class:bg-slate-500={active && darkMode}
+										class:text-white={active && darkMode}
+									>{p.label}</button>
+								{/each}
+							</div>
+						{/if}
 						<span class="flex items-center gap-1.5"><span class="inline-block w-3 h-3 rounded-sm" style="background: {colors.opened}"></span>Opened</span>
 						<span class="flex items-center gap-1.5"><span class="inline-block w-3 h-3 rounded-sm" style="background: {colors.merged}"></span>Merged</span>
 					</div>
 				</div>
 				<p class="text-xs h-4 mb-1 tabular-nums" class:text-gray-500={!darkMode} class:text-gray-400={darkMode}>
-					{#if hoveredWeek !== null}
-						Week of {weekLabel(view.weeks[hoveredWeek].start)}: {view.weeks[hoveredWeek].opened} opened, {view.weeks[hoveredWeek].merged} merged
+					{#if hovered !== null && points[hovered]}
+						{pointLabel(hovered)}: {points[hovered].opened} opened, {points[hovered].merged} merged
 					{:else}
-						Hover a week for its numbers
+						Hover a {period} for its numbers
 					{/if}
 				</p>
-				<svg viewBox="0 0 {chart.width} {chart.height}" class="w-full h-auto" role="img" aria-label="Pull requests opened and merged per week" onmouseleave={() => (hoveredWeek = null)}>
+				<svg viewBox="0 0 {chart.width} {chart.height}" class="w-full h-auto" role="img" aria-label="Pull requests opened and merged per {period}" onmouseleave={() => (hovered = null)}>
 					{#each ticks(max) as t (t)}
 						{@const y = chart.top + plotH - (t / max) * plotH}
 						<line x1={chart.left} x2={chart.width - chart.right} y1={y} y2={y} stroke={colors.grid} stroke-width="1" />
 						<text x={chart.left - 6} y={y + 3} text-anchor="end" font-size="10" fill={colors.muted}>{t}</text>
 					{/each}
-					{#each view.weeks as w, i (w.start)}
+					{#each points as w, i (w.start)}
 						{@const x0 = chart.left + i * groupW + (groupW - (2 * barW + 2)) / 2}
-						{@const isLast = i === view.weeks.length - 1}
-						{@const dim = hoveredWeek !== null && hoveredWeek !== i}
+						{@const isLast = i === points.length - 1}
+						{@const dim = hovered !== null && hovered !== i}
 						<g opacity={dim ? 0.45 : 1}>
 							<path d={bar(x0, w.opened, max, barW)} fill={colors.opened} />
 							<path d={bar(x0 + barW + 2, w.merged, max, barW)} fill={colors.merged} />
-							{#if isLast || hoveredWeek === i}
+							{#if isLast || hovered === i}
 								<text x={x0 + barW / 2} y={chart.top + plotH - (w.opened / max) * plotH - 4} text-anchor="middle" font-size="10" fill={colors.ink}>{w.opened}</text>
 								<text x={x0 + barW + 2 + barW / 2} y={chart.top + plotH - (w.merged / max) * plotH - 4} text-anchor="middle" font-size="10" fill={colors.ink}>{w.merged}</text>
 							{/if}
 						</g>
-						<text x={chart.left + i * groupW + groupW / 2} y={chart.height - 10} text-anchor="middle" font-size="10" fill={colors.muted}>{weekLabel(w.start)}</text>
+						<text x={chart.left + i * groupW + groupW / 2} y={chart.height - 10} text-anchor="middle" font-size="10" fill={colors.muted}>{period === 'week' ? weekLabel(w.start) : monthLabel(w.start)}</text>
 						<!-- hit target wider than the bars -->
-						<rect role="presentation" x={chart.left + i * groupW} y={chart.top} width={groupW} height={plotH + chart.bottom} fill="transparent" onmouseenter={() => (hoveredWeek = i)} />
+						<rect role="presentation" x={chart.left + i * groupW} y={chart.top} width={groupW} height={plotH + chart.bottom} fill="transparent" onmouseenter={() => (hovered = i)} />
 					{/each}
 					<line x1={chart.left} x2={chart.width - chart.right} y1={chart.top + plotH} y2={chart.top + plotH} stroke={colors.muted} stroke-width="1" />
 				</svg>
@@ -467,70 +532,19 @@
 					<summary class="cursor-pointer select-none">Show numbers</summary>
 					<table class="mt-2 w-full tabular-nums">
 						<thead>
-							<tr class="text-left" class:text-gray-500={!darkMode} class:text-gray-400={darkMode}><th class="font-medium pr-3">Week of</th><th class="font-medium pr-3">Opened</th><th class="font-medium">Merged</th></tr>
+							<tr class="text-left" class:text-gray-500={!darkMode} class:text-gray-400={darkMode}><th class="font-medium pr-3">{period === 'week' ? 'Week of' : 'Month'}</th><th class="font-medium pr-3">Opened</th><th class="font-medium">Merged</th></tr>
 						</thead>
 						<tbody>
-							{#each view.weeks as w (w.start)}
-								<tr><td class="pr-3 py-0.5">{weekLabel(w.start)}</td><td class="pr-3">{w.opened}</td><td>{w.merged}</td></tr>
+							{#each points as w, i (w.start)}
+								<tr><td class="pr-3 py-0.5">{period === 'week' ? weekLabel(w.start) : pointLabel(i)}</td><td class="pr-3">{w.opened}</td><td>{w.merged}</td></tr>
 							{/each}
 						</tbody>
 					</table>
 				</details>
 			</div>
 
-			<!-- Leaderboards -->
-			<div class="grid grid-cols-1 @3xl:grid-cols-2 gap-6">
-				{#snippet board(title: string, seriesLabel: string, rows: { login: string; avatarUrl: string; primary: number; primaryLabel: string; secondary: string; weekly: number[] }[])}
-					<div class="rounded-xl p-5 shadow-sm" class:bg-white={!darkMode} class:bg-slate-800={darkMode}>
-						<h3 class="text-lg font-semibold mb-3" class:text-gray-800={!darkMode} class:text-white={darkMode}>{title} <span class="text-xs font-normal" class:text-gray-400={!darkMode} class:text-gray-500={darkMode}>team · sparkline: {seriesLabel} per week</span></h3>
-						<ol class="space-y-2">
-							{#each rows as row, i (row.login)}
-								<li class="flex items-center gap-3 text-sm">
-									<span class="w-6 text-center">{row.primary > 0 && MEDALS[i] ? MEDALS[i] : `${i + 1}.`}</span>
-									<img src={smallAvatar(row.avatarUrl)} alt="" class="w-7 h-7 rounded-full flex-shrink-0" loading="lazy" />
-									<a
-										href="https://github.com/{row.login}"
-										target="_blank"
-										rel="noopener noreferrer"
-										class="truncate font-medium hover:underline"
-										class:text-gray-800={!darkMode}
-										class:text-gray-100={darkMode}
-									>{row.login}</a>
-									<svg viewBox="0 0 72 20" width="72" height="20" class="flex-shrink-0 ml-auto" aria-hidden="true">
-										<title>{row.weekly.join(' · ')} {seriesLabel} per week</title>
-										<polyline points={sparkline(row.weekly)} fill="none" stroke={colors.merged} stroke-width="2" stroke-linejoin="round" stroke-linecap="round" />
-										<circle cx="72" cy={20 - 2 - (row.weekly[row.weekly.length - 1] / Math.max(1, ...row.weekly)) * 16} r="2.5" fill={colors.merged} />
-									</svg>
-									<span class="whitespace-nowrap tabular-nums w-20 text-right" class:text-gray-700={!darkMode} class:text-gray-300={darkMode}>
-										<strong>{row.primary}</strong> {row.primaryLabel}
-									</span>
-									<span class="whitespace-nowrap text-xs w-20 text-right" class:text-gray-400={!darkMode} class:text-gray-500={darkMode}>{row.secondary}</span>
-								</li>
-							{/each}
-						</ol>
-					</div>
-				{/snippet}
-
-				{@render board('🔍 Top reviewers', 'PRs reviewed', view.reviewers.map((r) => ({
-					login: r.login,
-					avatarUrl: r.avatarUrl,
-					primary: r.prsReviewed,
-					primaryLabel: r.prsReviewed === 1 ? 'PR' : 'PRs',
-					secondary: `${r.approvals} approved`,
-					weekly: r.weekly
-				})))}
-				{@render board('🛠️ Top authors', 'PRs merged', view.authors.map((a) => ({
-					login: a.login,
-					avatarUrl: a.avatarUrl,
-					primary: a.merged,
-					primaryLabel: 'merged',
-					secondary: `${a.opened} opened`,
-					weekly: a.weekly
-				})))}
-			</div>
-
 			{#if view.recentlyMerged.length > 0}
-				<div class="mt-6 rounded-xl p-5 shadow-sm" class:bg-white={!darkMode} class:bg-slate-800={darkMode}>
+				<div class="rounded-xl p-5 shadow-sm" class:bg-white={!darkMode} class:bg-slate-800={darkMode}>
 					<h3 class="text-lg font-semibold mb-3" class:text-gray-800={!darkMode} class:text-white={darkMode}>✅ Recently merged</h3>
 					<ul class="space-y-1.5 text-sm">
 						{#each view.recentlyMerged as pr (pr.number)}

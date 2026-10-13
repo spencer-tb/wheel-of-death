@@ -1,5 +1,6 @@
 import type {
 	AuthorStat,
+	ChartPoint,
 	DevnetPlanRow,
 	EipPullRequest,
 	EipRow,
@@ -12,10 +13,10 @@ import type {
 	MergedPullRequest,
 	ReleaseItem,
 	ReleaseLink,
+	ReleaseTracker,
 	RepoStats,
 	ReviewerStat,
-	StatsView,
-	WeekPoint
+	StatsView
 } from './types';
 
 // Stats for the spec repo. A scheduled GitHub Actions job builds these and
@@ -25,6 +26,7 @@ const NAME = 'execution-specs';
 export const STATS_KEY = 'github_stats_v4';
 const WINDOW_DAYS = 7; // leaderboards
 const CHART_WEEKS = 8; // rolling weekly chart
+const CHART_MONTHS = 12; // monthly chart, calendar months
 const MAX_PAGES = 10; // 100 pull requests per page
 const LEADERBOARD_SIZE = 10;
 const RECENT_MERGES = 5;
@@ -61,11 +63,12 @@ interface ForkSpec {
 	headliners: { eip: number; branch: string | null; note?: string }[];
 	declinedFrom: number | null; // meta EIP whose declined EIPs roll forward to this fork
 	releasePrefixes: string[]; // release tags that belong to this fork
+	trackerLabel: string | null; // label on the fork's "Test Release Tracker" issues, next to C-tracker
 }
 
 const FORKS: ForkSpec[] = [
-	{ key: 'glamsterdam', label: 'Glamsterdam', position: 'N', metaEip: 7773, trackerIssue: 3217, assignmentsIssue: null, branch: 'forks/amsterdam', module: 'amsterdam', eipPrefix: 'eips/amsterdam/', placeholder: null, headliners: [], declinedFrom: null, releasePrefixes: ['tests@', 'tests-glamsterdam-devnet@'] },
-	{ key: 'hegota', label: 'Hegota', position: 'N+1', metaEip: 8081, trackerIssue: 3664, assignmentsIssue: 3685, branch: 'forks/bogota', module: 'bogota', eipPrefix: 'eips/bogota/', placeholder: null, headliners: [], declinedFrom: null, releasePrefixes: ['tests-hegota-devnet@', 'tests-frames-devnet@', 'tests-focil-devnet@'] },
+	{ key: 'glamsterdam', label: 'Glamsterdam', position: 'N', metaEip: 7773, trackerIssue: 3217, assignmentsIssue: null, branch: 'forks/amsterdam', module: 'amsterdam', eipPrefix: 'eips/amsterdam/', placeholder: null, headliners: [], declinedFrom: null, releasePrefixes: ['tests@', 'tests-glamsterdam-devnet@'], trackerLabel: null },
+	{ key: 'hegota', label: 'Hegota', position: 'N+1', metaEip: 8081, trackerIssue: 3664, assignmentsIssue: 3685, branch: 'forks/bogota', module: 'bogota', eipPrefix: 'eips/bogota/', placeholder: null, headliners: [], declinedFrom: null, releasePrefixes: ['tests-hegota-devnet@', 'tests-bogota-devnet@', 'tests-heze-devnet@', 'tests-frames-devnet@', 'tests-focil-devnet@'], trackerLabel: 'C-hegota' },
 	{
 		key: 'istar',
 		label: 'I*',
@@ -86,7 +89,8 @@ const FORKS: ForkSpec[] = [
 			{ eip: 8288, branch: null }
 		],
 		declinedFrom: 8081,
-		releasePrefixes: []
+		releasePrefixes: [],
+		trackerLabel: null
 	}
 ];
 
@@ -204,14 +208,15 @@ function buildView(
 	team: string[],
 	now: Date,
 	since: string,
-	totals: { openPRs: number; mergedPRs: number }
+	totals: { openPRs: number; mergedPRs: number },
+	months: ChartPoint[]
 ): StatsView {
 	const inWindow = (iso: string | null | undefined) => !!iso && iso >= since;
 	// Week 0 is the last 7 days, week CHART_WEEKS-1 the oldest; series are
 	// stored oldest first
 	const weekOf = (iso: string) => Math.floor((now.getTime() - new Date(iso).getTime()) / (WINDOW_DAYS * DAY));
 	const slot = (iso: string) => CHART_WEEKS - 1 - weekOf(iso);
-	const weeks: WeekPoint[] = Array.from({ length: CHART_WEEKS }, (_, i) => ({
+	const weeks: ChartPoint[] = Array.from({ length: CHART_WEEKS }, (_, i) => ({
 		start: new Date(now.getTime() - (CHART_WEEKS - i) * WINDOW_DAYS * DAY).toISOString(),
 		opened: 0,
 		merged: 0
@@ -317,6 +322,7 @@ function buildView(
 		totals,
 		week,
 		weeks,
+		months,
 		reviewers: topReviewers,
 		authors: topAuthors,
 		recentlyMerged: merged.slice(0, RECENT_MERGES)
@@ -401,7 +407,7 @@ function parseActivations(markdown: string): ForkActivation[] {
 }
 
 // The tracker's "### Status" checklist and its "Target release tag"
-function parseRelease(body: string, issue: number): ForkStage['release'] {
+function parseRelease(body: string, issue: number, releases: ReleaseLink[]): ReleaseTracker | null {
 	const name = body.match(/Target release tag\*{0,2}:\s*`([^`]+)`/)?.[1];
 	const section = body.split(/^### Status\s*$/m)[1]?.split(/^#{1,4} /m)[0];
 	if (!name || !section) return null;
@@ -410,7 +416,8 @@ function parseRelease(body: string, issue: number): ForkStage['release'] {
 		const box = line.match(/^\s*- \[( |x|X)\]\s*(.+)$/);
 		if (box) items.push({ text: stripMarkdown(box[2]), done: box[1] !== ' ' });
 	}
-	return items.length ? { name, issue, items } : null;
+	const url = releases.find((r) => r.tag === name)?.url ?? null;
+	return items.length ? { name, issue, url, items } : null;
 }
 
 // "| devnet | target | scope |" rows under "### Devnet Plan"
@@ -420,9 +427,21 @@ function parseDevnetPlan(body: string): DevnetPlanRow[] {
 	for (const line of section.split('\n')) {
 		const cells = line.split('|').map((c) => c.trim());
 		if (cells.length < 4 || /^-+$/.test(cells[1]) || /^devnet$/i.test(cells[1])) continue;
-		out.push({ devnet: stripMarkdown(cells[1]), target: stripMarkdown(cells[2]), scope: stripMarkdown(cells[3]) });
+		out.push({ devnet: stripMarkdown(cells[1]), target: stripMarkdown(cells[2]), scope: stripMarkdown(cells[3]), release: null });
 	}
 	return out;
+}
+
+// "bogota-devnet-1" in the plan ships as tests-bogota-devnet@v1.x.y; the
+// newest tracker for that devnet wins
+function linkDevnets(rows: DevnetPlanRow[], trackers: ReleaseTracker[]): DevnetPlanRow[] {
+	return rows.map((row) => {
+		const m = row.devnet.match(/^(.+-devnet)-(\d+)$/);
+		const hit = m
+			? trackers.filter((t) => t.name.replace(/^tests-/, '').startsWith(`${m[1]}@v${m[2]}.`)).sort((a, b) => b.issue - a.issue)[0]
+			: undefined;
+		return { ...row, release: hit ? { name: hit.name, issue: hit.issue, url: hit.url } : null };
+	});
 }
 
 // "| [N](...) | Title | Stage | [tracker](.../issues/M) | @a / @b |" rows
@@ -509,6 +528,14 @@ interface SearchPr {
 	url: string;
 	state: 'OPEN' | 'MERGED' | 'CLOSED';
 	baseRefName: string;
+}
+
+interface GhIssue {
+	number: number;
+	title: string;
+	state: 'open' | 'closed';
+	body: string | null;
+	pull_request?: unknown; // the issues endpoint lists pull requests too
 }
 
 interface GhRelease {
@@ -650,7 +677,7 @@ async function buildCandidatesFork(token: string, spec: ForkSpec): Promise<ForkV
 	return {
 		...emptyFork(spec),
 		description: `Fork ${spec.position}, name to be decided`,
-		stage: { label: 'Headliner selection', metaStatus: '—', activations: [], release: null, releases: [], devnets: [] },
+		stage: { label: 'Headliner selection', metaStatus: '—', activations: [], trackers: [], releases: [], devnets: [] },
 		sections,
 		summary: { eips: headliners.length + prototyped.length, implemented: 0, tested: 0, checkedOff: 0, inReview: 0 }
 	};
@@ -667,7 +694,7 @@ function emptyFork(spec: ForkSpec): ForkView {
 		trackerIssue: spec.trackerIssue,
 		assignmentsIssue: spec.assignmentsIssue,
 		branch: spec.branch,
-		stage: { label: 'Not scoped', metaStatus: '—', activations: [], release: null, releases: [], devnets: [] },
+		stage: { label: 'Not scoped', metaStatus: '—', activations: [], trackers: [], releases: [], devnets: [] },
 		sections: [],
 		summary: { eips: 0, implemented: 0, tested: 0, checkedOff: 0, inReview: 0 },
 		eips: []
@@ -678,12 +705,13 @@ async function buildFork(token: string, spec: ForkSpec, repo: string, releases: 
 	if (!spec.metaEip || !spec.branch || !spec.module || !spec.eipPrefix || !spec.trackerIssue) {
 		return spec.headliners.length ? buildCandidatesFork(token, spec) : emptyFork(spec);
 	}
-	const [meta, moduleSource, testsDir, issue, assignmentsIssue] = await Promise.all([
+	const [meta, moduleSource, testsDir, issue, assignmentsIssue, labelled] = await Promise.all([
 		raw(`ethereum/EIPs/master/EIPS/eip-${spec.metaEip}.md`),
 		raw(`${repo}/${spec.branch}/src/ethereum/forks/${spec.module}/__init__.py`),
 		rest<{ name: string; type: string }[]>(token, `/repos/${repo}/contents/tests/${spec.module}?ref=${spec.branch}`),
 		rest<{ body: string | null; html_url: string }>(token, `/repos/${repo}/issues/${spec.trackerIssue}`),
-		spec.assignmentsIssue ? rest<{ body: string | null }>(token, `/repos/${repo}/issues/${spec.assignmentsIssue}`) : Promise.resolve(null)
+		spec.assignmentsIssue ? rest<{ body: string | null }>(token, `/repos/${repo}/issues/${spec.assignmentsIssue}`) : Promise.resolve(null),
+		spec.trackerLabel ? rest<GhIssue[]>(token, `/repos/${repo}/issues?labels=C-tracker,${spec.trackerLabel}&state=all&per_page=50`) : Promise.resolve(null)
 	]);
 	const metaEips = meta ? parseMetaEip(meta) : new Map<number, { title: string; stage: EipStage }>();
 	const moduleEips = parseModuleEips(moduleSource);
@@ -695,7 +723,18 @@ async function buildFork(token: string, spec: ForkSpec, repo: string, releases: 
 	}
 	const tracker = parseTracker(issue?.body ?? '');
 
-	// Fork stage: the meta EIP's activations, the release checklist and the devnet plan
+	// Test release trackers: the fork tracker's own release checklist, then
+	// every labelled "Test Release Tracker" issue, oldest first. Only open
+	// ones are shown, closed ones still name the release a devnet shipped as.
+	const ownRelease = parseRelease(issue?.body ?? '', spec.trackerIssue, releases);
+	const labelledReleases = (labelled ?? [])
+		.filter((i) => !i.pull_request && /^Test Release Tracker/i.test(i.title) && i.number !== spec.trackerIssue)
+		.sort((a, b) => a.number - b.number)
+		.map((i) => ({ open: i.state === 'open', tracker: parseRelease(i.body ?? '', i.number, releases) }))
+		.filter((r): r is { open: boolean; tracker: ReleaseTracker } => r.tracker !== null);
+	const trackers = [...(ownRelease ? [ownRelease] : []), ...labelledReleases.filter((r) => r.open).map((r) => r.tracker)];
+
+	// Fork stage: the meta EIP's activations, the release checklists and the devnet plan
 	const activations = meta ? parseActivations(meta) : [];
 	const live = (network: string) => activations.find((a) => a.network.toLowerCase() === network && a.date);
 	// Once a testnet is live the fork is in maintenance: the remaining
@@ -710,9 +749,10 @@ async function buildFork(token: string, spec: ForkSpec, repo: string, releases: 
 		label: stageLabel,
 		metaStatus: meta ? metaStatus(meta) : '—',
 		activations,
-		release: parseRelease(issue?.body ?? '', spec.trackerIssue),
-		releases: releasesFor(releases, spec.releasePrefixes),
-		devnets: parseDevnetPlan(issue?.body ?? '')
+		trackers,
+		// New devnet names come in through their trackers' release tags
+		releases: releasesFor(releases, [...new Set([...spec.releasePrefixes, ...labelledReleases.map((r) => r.tracker.name.replace(/@.*$/, '@'))])]),
+		devnets: linkDevnets(parseDevnetPlan(issue?.body ?? ''), [...trackers, ...labelledReleases.map((r) => r.tracker)])
 	};
 
 	// EL scope: whatever the trackers, the module or the tests mention
@@ -820,6 +860,24 @@ async function buildFork(token: string, spec: ForkSpec, repo: string, releases: 
 	};
 }
 
+// Pull requests opened and merged per calendar month (UTC), oldest first.
+// Search counts in one request, since a year of pull requests is far past
+// what the paged fetch covers.
+async function monthlyPulls(token: string, repo: string, now: Date): Promise<ChartPoint[]> {
+	const day = (d: Date) => d.toISOString().slice(0, 10);
+	const months = Array.from({ length: CHART_MONTHS }, (_, i) => {
+		const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - (CHART_MONTHS - 1 - i), 1));
+		const end = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth() + 1, 0));
+		return { start, range: `${day(start)}..${day(end)}` };
+	});
+	const fields = months.flatMap((m, i) => [
+		`o${i}: search(query: "repo:${repo} is:pr created:${m.range}", type: ISSUE) { issueCount }`,
+		`m${i}: search(query: "repo:${repo} is:pr merged:${m.range}", type: ISSUE) { issueCount }`
+	]);
+	const data = await graphql<Record<string, { issueCount: number }>>(token, `query { ${fields.join('\n')} }`);
+	return months.map((m, i) => ({ start: m.start.toISOString(), opened: data[`o${i}`].issueCount, merged: data[`m${i}`].issueCount }));
+}
+
 export async function buildStats(token: string, team: string[]): Promise<RepoStats> {
 	const now = new Date();
 	const since = new Date(now.getTime() - WINDOW_DAYS * DAY).toISOString();
@@ -846,7 +904,7 @@ export async function buildStats(token: string, team: string[]): Promise<RepoSta
 	if (!first) throw new Error('No data from GitHub');
 
 	const r = first.repository;
-	const releases = await publishedReleases(token, repo);
+	const [releases, months] = await Promise.all([publishedReleases(token, repo), monthlyPulls(token, repo, now)]);
 	const forks: ForkView[] = [];
 	for (const spec of FORKS) forks.push(await buildFork(token, spec, repo, releases));
 
@@ -856,6 +914,7 @@ export async function buildStats(token: string, team: string[]): Promise<RepoSta
 		since,
 		windowDays: WINDOW_DAYS,
 		chartWeeks: CHART_WEEKS,
+		chartMonths: CHART_MONTHS,
 		totals: {
 			stars: r.stargazerCount,
 			forks: r.forkCount,
@@ -867,7 +926,7 @@ export async function buildStats(token: string, team: string[]): Promise<RepoSta
 			closedIssues: first.closedIssuesInWindow.issueCount
 		},
 		latestRelease: releases[0] ?? null,
-		eels: buildView(EELS_VIEW, pulls, team, now, since, { openPRs: r.openPRs.totalCount, mergedPRs: r.mergedPRs.totalCount }),
+		eels: buildView(EELS_VIEW, pulls, team, now, since, { openPRs: r.openPRs.totalCount, mergedPRs: r.mergedPRs.totalCount }, months),
 		forks
 	};
 }

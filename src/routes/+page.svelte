@@ -157,15 +157,31 @@
 	let theme: HTMLAudioElement | null = null;
 
 	$effect(() => {
-		if (avengersMode && soundEnabled) {
-			theme ??= new Audio(AVENGERS_THEME);
-			theme.volume = 0.6;
-			theme.play().catch(() => {
-				// Browsers may block audio until the page has been interacted with
-			});
-		} else {
+		if (!avengersMode || !soundEnabled) {
 			theme?.pause();
+			return;
 		}
+		theme ??= new Audio(AVENGERS_THEME);
+		theme.volume = 0.6;
+		const player = theme;
+		// A saved Avengers wheel opens straight into the mode, before anyone
+		// has touched the page, and browsers block audio until then: try again
+		// on the first click, key or tap
+		const GESTURES = ['click', 'keydown', 'touchend'] as const;
+		let live = true;
+		const stopWaiting = () => GESTURES.forEach((g) => window.removeEventListener(g, retry));
+		const retry = () => {
+			stopWaiting();
+			// The click may have just turned the team or the sound off
+			if (live && avengersMode && soundEnabled) player.play().catch(() => {});
+		};
+		player.play().catch(() => {
+			if (live) GESTURES.forEach((g) => window.addEventListener(g, retry));
+		});
+		return () => {
+			live = false;
+			stopWaiting();
+		};
 	});
 	let fastMode = $state(data.config?.fastMode ?? false);
 	let soundEnabled = $state(data.config?.soundEnabled ?? true);

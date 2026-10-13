@@ -259,10 +259,22 @@
 		{#if fork}
 			{@const stage = fork.stage}
 			{@const trackers = stage?.trackers ?? []}
-			<!-- Open trackers' releases lead Latest releases until they ship -->
-			{@const upcoming = trackers.filter((t) => !t.url)}
+			<!-- Several open trackers lead one release list on the right, with
+			     what has shipped under them, so no release shows twice -->
+			{@const multi = trackers.length > 1}
 			<!-- Fork stage -->
 			<div class="rounded-xl p-5 shadow-sm mb-6 grid grid-cols-1 @3xl:grid-cols-2 gap-6" class:bg-white={!darkMode} class:bg-slate-800={darkMode}>
+				{#snippet latestReleases()}
+					<div class="mt-3 text-xs uppercase tracking-wide" class:text-gray-500={!darkMode} class:text-gray-400={darkMode}>Latest releases</div>
+					<ul class="mt-1 space-y-0.5 text-sm" data-releases>
+						{#each stage?.releases ?? [] as r (r.tag)}
+							<li class="flex items-baseline gap-2">
+								<a href={r.url} target="_blank" rel="noopener noreferrer" class="font-mono hover:underline" class:text-indigo-600={!darkMode} class:text-indigo-400={darkMode}>{r.tag}</a>
+								<span class="text-xs" class:text-gray-500={!darkMode} class:text-gray-400={darkMode}>{r.date}</span>
+							</li>
+						{/each}
+					</ul>
+				{/snippet}
 				<div>
 					<div class="text-xs uppercase tracking-wide" class:text-gray-500={!darkMode} class:text-gray-400={darkMode}>Fork stage</div>
 					<div class="text-2xl font-bold" data-stage-label class:text-gray-800={!darkMode} class:text-white={darkMode}>{stage?.label ?? '…'}</div>
@@ -271,22 +283,8 @@
 							<a href="https://eips.ethereum.org/EIPS/eip-{fork.metaEip}" target="_blank" rel="noopener noreferrer" class="hover:underline">EIP-{fork.metaEip}</a> · {stage?.metaStatus ?? '—'}
 						</div>
 					{/if}
-					{#if upcoming.length || stage?.releases?.length}
-						<div class="mt-3 text-xs uppercase tracking-wide" class:text-gray-500={!darkMode} class:text-gray-400={darkMode}>Latest releases</div>
-						<ul class="mt-1 space-y-0.5 text-sm" data-releases>
-							{#each upcoming as t (t.issue)}
-								<li class="flex flex-wrap items-baseline gap-x-2" data-upcoming>
-									<span class="font-mono" class:text-gray-800={!darkMode} class:text-white={darkMode}>{t.name}</span>
-									<span class="text-xs whitespace-nowrap" class:text-gray-500={!darkMode} class:text-gray-400={darkMode}>in progress · <a href="https://github.com/{stats.repo}/issues/{t.issue}" target="_blank" rel="noopener noreferrer" class="font-mono hover:underline" class:text-indigo-600={!darkMode} class:text-indigo-400={darkMode}>#{t.issue}</a></span>
-								</li>
-							{/each}
-							{#each stage?.releases ?? [] as r (r.tag)}
-								<li class="flex items-baseline gap-2">
-									<a href={r.url} target="_blank" rel="noopener noreferrer" class="font-mono hover:underline" class:text-indigo-600={!darkMode} class:text-indigo-400={darkMode}>{r.tag}</a>
-									<span class="text-xs" class:text-gray-500={!darkMode} class:text-gray-400={darkMode}>{r.date}</span>
-								</li>
-							{/each}
-						</ul>
+					{#if !multi && stage?.releases?.length}
+						{@render latestReleases()}
 					{/if}
 					{#if stage?.activations?.length}
 						<ul class="mt-3 space-y-1 text-sm">
@@ -321,8 +319,8 @@
 							<span class="text-xs font-sans font-normal" class:text-gray-500={!darkMode} class:text-gray-400={darkMode}>{release.items.filter((i) => i.done).length} of {release.items.length} done</span>
 						</div>
 						{@render checklist(release.items)}
-					{:else if trackers.length > 1}
-						<div class="text-xs uppercase tracking-wide" class:text-gray-500={!darkMode} class:text-gray-400={darkMode}>Test releases · {trackers.length} open trackers</div>
+					{:else if multi}
+						<div class="text-xs uppercase tracking-wide" class:text-gray-500={!darkMode} class:text-gray-400={darkMode}>Test releases · {trackers.length} in progress</div>
 						<ul class="mt-1 divide-y" class:divide-slate-100={!darkMode} class:divide-slate-700={darkMode} data-trackers>
 							{#each trackers as t (t.issue)}
 								{@const done = t.items.filter((i) => i.done).length}
@@ -343,6 +341,9 @@
 								</li>
 							{/each}
 						</ul>
+						{#if stage?.releases?.length}
+							{@render latestReleases()}
+						{/if}
 					{:else if fork.placeholder}
 						<p class="text-sm" class:text-gray-600={!darkMode} class:text-gray-300={darkMode}>{fork.placeholder}</p>
 					{/if}

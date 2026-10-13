@@ -129,7 +129,7 @@ export interface ReleaseItem {
 }
 
 export interface ReleaseLink {
-	tag: string;
+	tag: string; // the release's name, which can differ from its git tag after a rename
 	url: string;
 	date: string; // YYYY-MM-DD
 }
@@ -182,6 +182,14 @@ export interface ForkView {
 	eips: EipRow[];
 }
 
+// The current EL Specs Calls agenda issue, its "###" sections and bullets
+export interface MeetingAgenda {
+	title: string;
+	number: number;
+	url: string;
+	sections: { title: string; items: { text: string; children: string[] }[] }[];
+}
+
 export interface RepoStats {
 	repo: string;
 	fetchedAt: string; // ISO timestamp
@@ -200,6 +208,7 @@ export interface RepoStats {
 		closedIssues: number;
 	};
 	latestRelease: ReleaseLink | null;
+	agenda: MeetingAgenda | null;
 	eels: StatsView;
 	forks: ForkView[];
 }

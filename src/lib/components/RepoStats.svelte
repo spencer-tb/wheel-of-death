@@ -117,6 +117,21 @@
 		return new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
 	}
 
+	// "#3664" and "EIP-8081" in a tab description become links
+	function linkParts(text: string): { text: string; href: string | null }[] {
+		return text
+			.split(/(#\d+|EIP-\d+)/)
+			.filter(Boolean)
+			.map((part) => ({
+				text: part,
+				href: /^#\d+$/.test(part)
+					? `https://github.com/${stats?.repo}/issues/${part.slice(1)}`
+					: /^EIP-\d+$/.test(part)
+						? `https://eips.ethereum.org/EIPS/eip-${part.slice(4)}`
+						: null
+			}));
+	}
+
 	// Months are calendar months in UTC
 	function monthLabel(iso: string, long = false): string {
 		return new Date(iso).toLocaleDateString(undefined, long ? { month: 'long', year: 'numeric', timeZone: 'UTC' } : { month: 'short', timeZone: 'UTC' });
@@ -186,6 +201,38 @@
 				</span>
 			</div>
 
+			<!-- This week's EL specs calls agenda, across every fork -->
+			{#if stats.agenda?.sections.length}
+				{@const agenda = stats.agenda}
+				<details open class="rounded-xl p-5 shadow-sm mb-6" class:bg-white={!darkMode} class:bg-slate-800={darkMode} data-agenda>
+					<summary class="cursor-pointer select-none">
+						<span class="text-lg font-semibold" class:text-gray-800={!darkMode} class:text-white={darkMode}>📅 {agenda.title}</span>
+						<a href={agenda.url} target="_blank" rel="noopener noreferrer" class="font-mono text-xs ml-1 hover:underline" class:text-indigo-600={!darkMode} class:text-indigo-400={darkMode}>#{agenda.number}</a>
+					</summary>
+					<div class="mt-3 grid grid-cols-1 @3xl:grid-cols-2 gap-x-6 gap-y-4">
+						{#each agenda.sections as s (s.title)}
+							<div>
+								<div class="text-xs uppercase tracking-wide" class:text-gray-500={!darkMode} class:text-gray-400={darkMode}>{s.title}</div>
+								<ul class="mt-1 ml-4 list-disc space-y-1.5 text-sm">
+									{#each s.items as item, i (i)}
+										<li>
+											<span class="font-medium" class:text-gray-800={!darkMode} class:text-gray-100={darkMode}>{item.text}</span>
+											{#if item.children.length}
+												<ul class="mt-0.5 ml-4 list-[circle] space-y-0.5 text-xs" class:text-gray-600={!darkMode} class:text-gray-300={darkMode}>
+													{#each item.children as child, j (j)}
+														<li>{child}</li>
+													{/each}
+												</ul>
+											{/if}
+										</li>
+									{/each}
+								</ul>
+							</div>
+						{/each}
+					</div>
+				</details>
+			{/if}
+
 			<!-- Tabs -->
 			<div class="flex gap-1 mb-1 border-b" class:border-slate-300={!darkMode} class:border-slate-700={darkMode} role="tablist">
 				{#each tabs as t (t.key)}
@@ -207,11 +254,13 @@
 					>{t.label}</button>
 				{/each}
 			</div>
-			<p class="text-xs mb-5" class:text-gray-500={!darkMode} class:text-gray-400={darkMode}>{description}</p>
+			<p class="text-xs mb-5" class:text-gray-500={!darkMode} class:text-gray-400={darkMode} data-description>{#each linkParts(description) as part, i (i)}{#if part.href}<a href={part.href} target="_blank" rel="noopener noreferrer" class="hover:underline" class:text-indigo-600={!darkMode} class:text-indigo-400={darkMode}>{part.text}</a>{:else}{part.text}{/if}{/each}</p>
 
 		{#if fork}
 			{@const stage = fork.stage}
 			{@const trackers = stage?.trackers ?? []}
+			<!-- Open trackers' releases lead Latest releases until they ship -->
+			{@const upcoming = trackers.filter((t) => !t.url)}
 			<!-- Fork stage -->
 			<div class="rounded-xl p-5 shadow-sm mb-6 grid grid-cols-1 @3xl:grid-cols-2 gap-6" class:bg-white={!darkMode} class:bg-slate-800={darkMode}>
 				<div>
@@ -222,10 +271,16 @@
 							<a href="https://eips.ethereum.org/EIPS/eip-{fork.metaEip}" target="_blank" rel="noopener noreferrer" class="hover:underline">EIP-{fork.metaEip}</a> · {stage?.metaStatus ?? '—'}
 						</div>
 					{/if}
-					{#if stage?.releases?.length}
+					{#if upcoming.length || stage?.releases?.length}
 						<div class="mt-3 text-xs uppercase tracking-wide" class:text-gray-500={!darkMode} class:text-gray-400={darkMode}>Latest releases</div>
 						<ul class="mt-1 space-y-0.5 text-sm" data-releases>
-							{#each stage.releases as r (r.tag)}
+							{#each upcoming as t (t.issue)}
+								<li class="flex flex-wrap items-baseline gap-x-2" data-upcoming>
+									<span class="font-mono" class:text-gray-800={!darkMode} class:text-white={darkMode}>{t.name}</span>
+									<span class="text-xs whitespace-nowrap" class:text-gray-500={!darkMode} class:text-gray-400={darkMode}>in progress · <a href="https://github.com/{stats.repo}/issues/{t.issue}" target="_blank" rel="noopener noreferrer" class="font-mono hover:underline" class:text-indigo-600={!darkMode} class:text-indigo-400={darkMode}>#{t.issue}</a></span>
+								</li>
+							{/each}
+							{#each stage?.releases ?? [] as r (r.tag)}
 								<li class="flex items-baseline gap-2">
 									<a href={r.url} target="_blank" rel="noopener noreferrer" class="font-mono hover:underline" class:text-indigo-600={!darkMode} class:text-indigo-400={darkMode}>{r.tag}</a>
 									<span class="text-xs" class:text-gray-500={!darkMode} class:text-gray-400={darkMode}>{r.date}</span>
@@ -296,7 +351,7 @@
 
 			{#if stage?.devnets?.length}
 				<div class="rounded-xl p-5 shadow-sm mb-6 overflow-x-auto" class:bg-white={!darkMode} class:bg-slate-800={darkMode}>
-					<h3 class="text-lg font-semibold mb-3" class:text-gray-800={!darkMode} class:text-white={darkMode}>🧪 Devnet plan <span class="text-xs font-normal" class:text-gray-400={!darkMode} class:text-gray-500={darkMode}>from tracker #{fork.trackerIssue}, internal and not yet agreed</span></h3>
+					<h3 class="text-lg font-semibold mb-3" class:text-gray-800={!darkMode} class:text-white={darkMode}>🧪 Devnet plan <span class="text-xs font-normal" class:text-gray-400={!darkMode} class:text-gray-500={darkMode}>from scoping tracker <a href="https://github.com/{stats.repo}/issues/{fork.trackerIssue}" target="_blank" rel="noopener noreferrer" class="font-mono hover:underline" class:text-indigo-600={!darkMode} class:text-indigo-400={darkMode}>#{fork.trackerIssue}</a>{#if fork.assignmentsIssue}, EIP owners in <a href="https://github.com/{stats.repo}/issues/{fork.assignmentsIssue}" target="_blank" rel="noopener noreferrer" class="font-mono hover:underline" class:text-indigo-600={!darkMode} class:text-indigo-400={darkMode}>#{fork.assignmentsIssue}</a>{/if}, internal and not yet agreed</span></h3>
 					<table class="w-full text-sm min-w-[680px]" data-devnet-table>
 						<thead>
 							<tr class="text-left text-xs uppercase tracking-wide" class:text-gray-500={!darkMode} class:text-gray-400={darkMode}><th class="py-1 pr-3 font-medium">Devnet</th><th class="py-1 pr-3 font-medium">Release</th><th class="py-1 pr-3 font-medium">Target</th><th class="py-1 font-medium">Scope</th></tr>

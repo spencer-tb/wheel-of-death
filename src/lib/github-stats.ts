@@ -10,6 +10,7 @@ import type {
 	ForkActivation,
 	ForkStage,
 	ForkView,
+	MeetingAgenda,
 	MergedPullRequest,
 	ReleaseItem,
 	ReleaseLink,
@@ -31,6 +32,9 @@ const MAX_PAGES = 10; // 100 pull requests per page
 const LEADERBOARD_SIZE = 10;
 const RECENT_MERGES = 5;
 const DAY = 24 * 60 * 60 * 1000;
+// Agenda issues for the EL specs calls
+const AGENDA_REPO = 'ethspecs/pm';
+const AGENDA_TITLE = 'EL Specs Calls';
 
 // The EELS tab covers every pull request; fork tabs are EIP trackers
 interface ViewSpec {
@@ -68,7 +72,7 @@ interface ForkSpec {
 
 const FORKS: ForkSpec[] = [
 	{ key: 'glamsterdam', label: 'Glamsterdam', position: 'N', metaEip: 7773, trackerIssue: 3217, assignmentsIssue: null, branch: 'forks/amsterdam', module: 'amsterdam', eipPrefix: 'eips/amsterdam/', placeholder: null, headliners: [], declinedFrom: null, releasePrefixes: ['tests@', 'tests-glamsterdam-devnet@'], trackerLabel: null },
-	{ key: 'hegota', label: 'Hegota', position: 'N+1', metaEip: 8081, trackerIssue: 3664, assignmentsIssue: 3685, branch: 'forks/bogota', module: 'bogota', eipPrefix: 'eips/bogota/', placeholder: null, headliners: [], declinedFrom: null, releasePrefixes: ['tests-hegota-devnet@', 'tests-bogota-devnet@', 'tests-heze-devnet@', 'tests-frames-devnet@', 'tests-focil-devnet@'], trackerLabel: 'C-hegota' },
+	{ key: 'hegota', label: 'Hegota', position: 'N+1', metaEip: 8081, trackerIssue: 3664, assignmentsIssue: 3685, branch: 'forks/bogota', module: 'bogota', eipPrefix: 'eips/bogota/', placeholder: null, headliners: [], declinedFrom: null, releasePrefixes: ['tests-hegota-devnet@', 'tests-bogota-devnet@', 'tests-heze-devnet@', 'tests-focil-devnet@'], trackerLabel: 'C-hegota' },
 	{
 		key: 'istar',
 		label: 'I*',
@@ -535,22 +539,60 @@ interface GhIssue {
 	title: string;
 	state: 'open' | 'closed';
 	body: string | null;
+	html_url: string;
 	pull_request?: unknown; // the issues endpoint lists pull requests too
 }
 
 interface GhRelease {
 	tag_name: string;
+	name: string | null;
 	html_url: string;
 	published_at: string | null;
 	draft: boolean;
 }
 
+// Releases get renamed without moving their git tag (tests-frames-devnet@v1.0.0
+// is now tests-bogota-devnet@v1.0.0), so a tag-shaped name wins over the tag
 async function publishedReleases(token: string, repo: string): Promise<ReleaseLink[]> {
 	const list = (await rest<GhRelease[]>(token, `/repos/${repo}/releases?per_page=60`)) ?? [];
 	return list
 		.filter((r) => !r.draft && r.published_at)
 		.sort((a, b) => b.published_at!.localeCompare(a.published_at!))
-		.map((r) => ({ tag: r.tag_name, url: r.html_url, date: r.published_at!.slice(0, 10) }));
+		.map((r) => {
+			const name = r.name?.trim();
+			return { tag: name && /^[\w.-]+@v\d/.test(name) ? name : r.tag_name, url: r.html_url, date: r.published_at!.slice(0, 10) };
+		});
+}
+
+// The newest open "EL Specs Calls" issue in ethspecs/pm. A missing or
+// unreadable agenda only hides the card.
+async function currentAgenda(token: string): Promise<MeetingAgenda | null> {
+	let issues: GhIssue[] | null;
+	try {
+		issues = await rest<GhIssue[]>(token, `/repos/${AGENDA_REPO}/issues?labels=meeting&state=open&per_page=20`);
+	} catch (e) {
+		console.error('Agenda fetch failed:', e);
+		return null;
+	}
+	const issue = (issues ?? [])
+		.filter((i) => !i.pull_request && i.title.startsWith(AGENDA_TITLE))
+		.sort((a, b) => b.number - a.number)[0];
+	if (!issue) return null;
+	const sections: MeetingAgenda['sections'] = [];
+	for (const chunk of (issue.body ?? '').split(/^### /m).slice(1)) {
+		const [heading, ...lines] = chunk.split('\n');
+		const items: MeetingAgenda['sections'][number]['items'] = [];
+		for (const line of lines) {
+			if (/^#{1,2} /.test(line)) break;
+			const bullet = line.match(/^(\s*)[-*]\s+(.+)$/);
+			if (!bullet) continue;
+			const text = stripMarkdown(bullet[2]);
+			if (bullet[1].length === 0 || items.length === 0) items.push({ text, children: [] });
+			else items[items.length - 1].children.push(text);
+		}
+		if (items.length) sections.push({ title: stripMarkdown(heading), items });
+	}
+	return { title: issue.title, number: issue.number, url: issue.html_url, sections };
 }
 
 // The newest release per prefix, newest first
@@ -750,8 +792,9 @@ async function buildFork(token: string, spec: ForkSpec, repo: string, releases: 
 		metaStatus: meta ? metaStatus(meta) : '—',
 		activations,
 		trackers,
-		// New devnet names come in through their trackers' release tags
-		releases: releasesFor(releases, [...new Set([...spec.releasePrefixes, ...labelledReleases.map((r) => r.tracker.name.replace(/@.*$/, '@'))])]),
+		// New devnet names come in through their open trackers' release tags;
+		// retired ones (frames, renamed to bogota) drop out once their trackers close
+		releases: releasesFor(releases, [...new Set([...spec.releasePrefixes, ...trackers.map((t) => t.name.replace(/@.*$/, '@'))])]),
 		devnets: linkDevnets(parseDevnetPlan(issue?.body ?? ''), [...trackers, ...labelledReleases.map((r) => r.tracker)])
 	};
 
@@ -904,7 +947,7 @@ export async function buildStats(token: string, team: string[]): Promise<RepoSta
 	if (!first) throw new Error('No data from GitHub');
 
 	const r = first.repository;
-	const [releases, months] = await Promise.all([publishedReleases(token, repo), monthlyPulls(token, repo, now)]);
+	const [releases, months, agenda] = await Promise.all([publishedReleases(token, repo), monthlyPulls(token, repo, now), currentAgenda(token)]);
 	const forks: ForkView[] = [];
 	for (const spec of FORKS) forks.push(await buildFork(token, spec, repo, releases));
 
@@ -926,6 +969,7 @@ export async function buildStats(token: string, team: string[]): Promise<RepoSta
 			closedIssues: first.closedIssuesInWindow.issueCount
 		},
 		latestRelease: releases[0] ?? null,
+		agenda,
 		eels: buildView(EELS_VIEW, pulls, team, now, since, { openPRs: r.openPRs.totalCount, mergedPRs: r.mergedPRs.totalCount }, months),
 		forks
 	};
